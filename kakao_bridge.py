@@ -36,11 +36,15 @@ class Message:
 class KakaoBridge:
     """macOS Accessibility API를 통해 카카오톡 제어"""
 
+    # Possible main window titles (Korean / English KakaoTalk)
+    MAIN_WINDOW_NAMES = ("카카오톡", "KakaoTalk", "Kakao Talk")
+
     def __init__(self):
         self.current_room: Optional[str] = None
         self.app_name = "KakaoTalk"
         self._last_error: Optional[str] = None  # Last AppleScript error
         self._pid: Optional[int] = None  # KakaoTalk process ID
+        self._main_title: Optional[str] = None  # Detected main window title
 
     def _get_pid(self) -> int:
         """Get KakaoTalk process ID (cached)"""
@@ -85,9 +89,28 @@ class KakaoBridge:
             self._ax_app = AXUIElementCreateApplication(pid)
         return self._ax_app
 
+    def _get_main_title(self) -> str:
+        """Detect the main window title (cached). Works for both Korean and English."""
+        if self._main_title:
+            return self._main_title
+        app = self._get_ax_app()
+        windows = self._ax_val(app, 'AXWindows')
+        if windows:
+            for win in windows:
+                title = self._ax_val(win, 'AXTitle')
+                if title and title in self.MAIN_WINDOW_NAMES:
+                    self._main_title = title
+                    return title
+        self._main_title = self.MAIN_WINDOW_NAMES[0]  # fallback
+        return self._main_title
+
+    def _is_main_window(self, title: str) -> bool:
+        """Check if a window title is the main KakaoTalk window."""
+        return title in self.MAIN_WINDOW_NAMES
+
     def _find_ax_scroll_and_table(self, window_name: str) -> Tuple[Any, Any]:
         """Find scroll area and table in a window by name.
-        For main window: exact match 'window_name'
+        For main window: matches any known main window title
         For chat windows: contains 'window_name'
         Returns (scroll_area, table) or (None, None)
         """
@@ -95,11 +118,12 @@ class KakaoBridge:
         windows = self._ax_val(app, 'AXWindows')
         if not windows:
             return None, None
+        is_main = self._is_main_window(window_name)
         for win in windows:
             title = self._ax_val(win, 'AXTitle')
             if not title:
                 continue
-            match = (title == window_name) if window_name == '카카오톡' else (window_name in title)
+            match = self._is_main_window(title) if is_main else (window_name in title)
             if match:
                 children = self._ax_val(win, 'AXChildren')
                 if not children:
@@ -215,7 +239,7 @@ end tell
             name = part[:sep].strip()
             has_input = part[sep + 2:].strip()
 
-            if name == "카카오톡":
+            if self._is_main_window(name):
                 win_type = "main"
             elif has_input == "yes":
                 win_type = "chat"
@@ -228,7 +252,7 @@ end tell
 
     def get_chat_rooms(self, limit: int = 10, offset: int = 0) -> List[ChatRoom]:
         """Get chat room list with row indices and unread counts (direct AX API)"""
-        scroll_area, table = self._find_ax_scroll_and_table('카카오톡')
+        scroll_area, table = self._find_ax_scroll_and_table(self._get_main_title())
         if not table:
             return []
 
@@ -247,7 +271,13 @@ end tell
         else:
             unread_threshold = 99999
 
-        skip_names = {"전체 폴더", "안읽음 폴더", "즐겨찾기", "채팅", "친구", "더보기", ""}
+        skip_names = {
+            # Korean
+            "전체 폴더", "안읽음 폴더", "즐겨찾기", "채팅", "친구", "더보기",
+            # English
+            "All", "Unread", "Favorites", "Chats", "Friends", "More",
+            ""
+        }
         rooms = []
         fetch_limit = limit + offset + 5
 
@@ -297,13 +327,19 @@ end tell
         query_lower = query.lower()
         return [r for r in all_rooms if query_lower in r.name.lower()]
 
+    def _as_main_window_check(self) -> str:
+        """Generate AppleScript condition to match main window by any known name."""
+        conditions = [f'name of w is "{n}"' for n in self.MAIN_WINDOW_NAMES]
+        return "(" + " or ".join(conditions) + ")"
+
     def open_room_by_index(self, row_index: int, room_name: str = "") -> bool:
         """Open chat room by row index - background, no window activation"""
+        main_check = self._as_main_window_check()
         script = f'''
 tell application "System Events"
     tell process "KakaoTalk"
         repeat with w in windows
-            if name of w is "카카오톡" then
+            if {main_check} then
                 tell w
                     tell scroll area 1
                         tell table 1
@@ -341,11 +377,12 @@ end tell
         if not search_name:
             return False
 
+        main_check = self._as_main_window_check()
         script = f'''
 tell application "System Events"
     tell process "KakaoTalk"
         repeat with w in windows
-            if name of w is "카카오톡" then
+            if {main_check} then
                 tell w
                     tell scroll area 1
                         tell table 1
@@ -395,7 +432,9 @@ end tell
             search_name = self._strip_emoji(self.current_room)
             win_check = f'name of w contains "{search_name}"'
         else:
-            win_check = 'name of w is not "카카오톡" and name of w is not ""'
+            # Exclude all possible main window names
+            excludes = ' and '.join(f'name of w is not "{n}"' for n in self.MAIN_WINDOW_NAMES)
+            win_check = f'{excludes} and name of w is not ""'
 
         script = f'''
 tell application "System Events"
@@ -425,17 +464,41 @@ end tell
 
     @staticmethod
     def _is_time_string(text: str) -> bool:
-        """Check if a string looks like a KakaoTalk time stamp (e.g. '오후 6:26', '오전 9:43')"""
+        """Check if a string looks like a KakaoTalk time stamp.
+        Korean: '오후 6:26', '오전 9:43'
+        English: '6:26 PM', '9:43 AM', '18:26'
+        """
         if not text:
             return False
-        return text.startswith("오전 ") or text.startswith("오후 ")
+        # Korean format
+        if text.startswith("오전 ") or text.startswith("오후 "):
+            return True
+        # English format: "6:26 PM", "11:43 AM"
+        if text.endswith(" AM") or text.endswith(" PM"):
+            return bool(re.match(r'^\d{1,2}:\d{2}\s*[AP]M$', text))
+        # 24h format: "18:26"
+        if re.match(r'^\d{1,2}:\d{2}$', text):
+            return True
+        return False
 
     @staticmethod
     def _is_date_string(text: str) -> bool:
-        """Check if text is a date separator (e.g. '2025년 1월 24일 금요일')"""
+        """Check if text is a date separator.
+        Korean: '2025년 1월 24일 금요일'
+        English: 'Friday, January 24, 2025', 'January 24, 2025'
+        """
         if not text:
             return False
-        return "년 " in text and "월 " in text and "일" in text
+        # Korean format
+        if "년 " in text and "월 " in text and "일" in text:
+            return True
+        # English format: weekday + month + day + year
+        months = ("January", "February", "March", "April", "May", "June",
+                  "July", "August", "September", "October", "November", "December")
+        for m in months:
+            if m in text and re.search(r'\d{4}', text):
+                return True
+        return False
 
     @staticmethod
     def _is_read_count(text: str) -> bool:
@@ -488,7 +551,7 @@ end tell
                 if windows:
                     for win in windows:
                         title = self._ax_val(win, 'AXTitle')
-                        if title and title != '카카오톡' and title != '':
+                        if title and not self._is_main_window(title) and title != '':
                             children = self._ax_val(win, 'AXChildren')
                             if children:
                                 for child in children:
