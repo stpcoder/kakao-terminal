@@ -272,10 +272,10 @@ end tell
             unread_threshold = 99999
 
         skip_names = {
-            # Korean
-            "전체 폴더", "안읽음 폴더", "즐겨찾기", "채팅", "친구", "더보기",
-            # English
-            "All", "Unread", "Favorites", "Chats", "Friends", "More",
+            # Korean UI tabs/folders
+            "전체", "안읽음", "즐겨찾기", "채팅", "친구", "더보기", "채널",
+            # English UI tabs/folders
+            "All", "Unread", "Favorites", "Chats", "Friends", "More", "Channels",
             ""
         }
         rooms = []
@@ -466,12 +466,16 @@ end tell
     def _is_time_string(text: str) -> bool:
         """Check if a string looks like a KakaoTalk time stamp.
         Korean: '오후 6:26', '오전 9:43'
+        Japanese: '午後 6:26', '午前 9:43'
         English: '6:26 PM', '9:43 AM', '18:26'
         """
         if not text:
             return False
         # Korean format
         if text.startswith("오전 ") or text.startswith("오후 "):
+            return True
+        # Japanese format
+        if text.startswith("午前") or text.startswith("午後"):
             return True
         # English format: "6:26 PM", "11:43 AM"
         if text.endswith(" AM") or text.endswith(" PM"):
@@ -486,13 +490,17 @@ end tell
         """Check if text is a date separator.
         Korean: '2025년 1월 24일 금요일'
         English: 'Friday, January 24, 2025', 'January 24, 2025'
+        Japanese: '2025年1月24日 金曜日'
         """
         if not text:
             return False
-        # Korean format
+        # Korean format (년/월/일)
         if "년 " in text and "월 " in text and "일" in text:
             return True
-        # English format: weekday + month + day + year
+        # Japanese format (年/月/日)
+        if "年" in text and "月" in text and "日" in text:
+            return True
+        # English format: month name + 4-digit year
         months = ("January", "February", "March", "April", "May", "June",
                   "July", "August", "September", "October", "November", "December")
         for m in months:
