@@ -283,7 +283,10 @@ class KakaoTerminal(App):
         log = self.query_one("#chat-log", RichLog)
 
         # 열린 카톡 창 상태 체크
-        windows = self.kakao.get_open_windows()
+        try:
+            windows = self.kakao.get_open_windows()
+        except Exception:
+            windows = []
         chat_windows = [w for w in windows if w["type"] == "chat"]
         if chat_windows:
             log.write(f"[dim]⏺[/] Open chat windows:")
@@ -295,7 +298,10 @@ class KakaoTerminal(App):
         log.write(f"[yellow]{SPINNER_FRAMES[0]}[/] Loading rooms...")
         # 카톡 활성화 없이 백그라운드에서 읽기 (창 안 뜸)
         self.room_offset = 0
-        rooms = self.kakao.get_chat_rooms(limit=10, offset=0)
+        try:
+            rooms = self.kakao.get_chat_rooms(limit=10, offset=0)
+        except Exception:
+            rooms = []
         self.room_list = rooms
         self.in_room_list = True
         if rooms:
@@ -309,7 +315,8 @@ class KakaoTerminal(App):
             log.write("")
             log.write("[dim]  /o <n> to connect | ↓ more | /s <query>[/]")
         else:
-            log.write("[yellow]⚠[/] No rooms found")
+            reason = self.kakao.diagnose_no_rooms()
+            log.write(f"[red]✗[/] {reason}")
 
     async def _auto_refresh(self) -> None:
         """Auto refresh - chat messages or rooms list"""
@@ -368,9 +375,8 @@ class KakaoTerminal(App):
             log.write("")
             self.messages = messages
         else:
-            log.write("[yellow]⚠[/] No messages found (Ctrl+R to retry)")
-            if self.kakao._last_error:
-                log.write(f"[dim]  {self.kakao._last_error}[/]")
+            reason = self.kakao.diagnose_no_messages()
+            log.write(f"[red]✗[/] {reason}")
 
     async def _scroll_messages_up(self) -> None:
         """Load older messages (up arrow / /u)"""
@@ -528,7 +534,7 @@ class KakaoTerminal(App):
                     self.messages = []
                     await self._fetch_and_display_messages(log)
                 else:
-                    log.write(f"[red]✗[/] Room '{safe_room}' not found")
+                    log.write(f"[red]✗[/] Failed to open '{safe_room}'. Make sure KakaoTalk main window is on the Chats tab and try /l again.")
             else:
                 log.write("[yellow]Usage:[/] /o <number> or /o <name>")
                 log.write("[dim]  Run /l first to see the list[/]")
@@ -537,7 +543,10 @@ class KakaoTerminal(App):
             log.write(f"[yellow]{SPINNER_FRAMES[0]}[/] Fetching rooms...")
             # 카톡 활성화 없이 백그라운드에서 읽기 (창 안 뜸)
             self.room_offset = 0
-            rooms = self.kakao.get_chat_rooms(limit=10, offset=0)
+            try:
+                rooms = self.kakao.get_chat_rooms(limit=10, offset=0)
+            except Exception:
+                rooms = []
             self.room_list = rooms
             self.in_room_list = True
             self.in_chat = False
@@ -553,7 +562,8 @@ class KakaoTerminal(App):
                 log.write("")
                 log.write("[dim]  /o <n> to connect | ↓ more | /s <query>[/]")
             else:
-                log.write("[yellow]⚠[/] No rooms found")
+                reason = self.kakao.diagnose_no_rooms()
+                log.write(f"[red]✗[/] {reason}")
 
         elif command in ("s", "search"):
             if args:
@@ -659,7 +669,8 @@ class KakaoTerminal(App):
             # 전송 후 1초 뒤 자동 새로고침 (카톡이 처리할 시간)
             self.set_timer(1.0, self._refresh_after_send)
         else:
-            log.write("[red]✗[/] Failed to send message")
+            reason = self.kakao.diagnose_send_failure()
+            log.write(f"[red]✗[/] {reason}")
 
     def _update_room_bar(self) -> None:
         """No longer used - room bar removed"""
@@ -699,7 +710,8 @@ class KakaoTerminal(App):
                 None, lambda: self.kakao.get_chat_messages(retry=1)
             )
         except Exception:
-            log.write("[red]✗[/] Refresh failed")
+            reason = self.kakao.diagnose_no_messages()
+            log.write(f"[red]✗[/] {reason}")
             self._focus_input()
             return
         if messages:
@@ -715,8 +727,8 @@ class KakaoTerminal(App):
             log.write("")
             self.messages = messages
         else:
-            log.write("[yellow]⚠[/] No messages retrieved")
-            log.write("[dim]  Open a chat room first[/]")
+            reason = self.kakao.diagnose_no_messages()
+            log.write(f"[red]✗[/] {reason}")
 
         self._focus_input()
 

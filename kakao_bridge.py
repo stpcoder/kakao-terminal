@@ -108,6 +108,80 @@ class KakaoBridge:
         """Check if a window title is the main KakaoTalk window."""
         return title in self.MAIN_WINDOW_NAMES
 
+    def diagnose_no_rooms(self) -> str:
+        """Diagnose why get_chat_rooms returned empty. Returns error message."""
+        # Check if KakaoTalk is running
+        result = subprocess.run(['pgrep', '-x', 'KakaoTalk'], capture_output=True, text=True)
+        if not result.stdout.strip():
+            return "KakaoTalk is not running. Launch KakaoTalk and log in."
+
+        # Check if main window exists
+        try:
+            app = self._get_ax_app()
+            windows = self._ax_val(app, 'AXWindows')
+        except Exception:
+            return "Cannot access KakaoTalk. Grant accessibility permission to your terminal."
+
+        if not windows:
+            return "No KakaoTalk windows found. Open KakaoTalk from the dock."
+
+        # Check if main window is present
+        main_found = False
+        for win in windows:
+            title = self._ax_val(win, 'AXTitle')
+            if title and self._is_main_window(title):
+                main_found = True
+                # Check if it has a scroll area with a table (Chats tab)
+                children = self._ax_val(win, 'AXChildren')
+                if children:
+                    for child in children:
+                        if self._ax_val(child, 'AXRole') == 'AXScrollArea':
+                            sa_children = self._ax_val(child, 'AXChildren')
+                            if sa_children:
+                                for sc in sa_children:
+                                    if self._ax_val(sc, 'AXRole') == 'AXTable':
+                                        return "Room list is empty. Try scrolling or restarting KakaoTalk."
+                    # No table found - wrong tab
+                    return "Switch to the Chats tab in KakaoTalk. Currently showing a different tab (Friends/More)."
+                break
+
+        if not main_found:
+            return "KakaoTalk main window is not open. Click the KakaoTalk icon in the dock."
+
+        return "Could not read room list. Check if KakaoTalk is responsive."
+
+    def diagnose_no_messages(self) -> str:
+        """Diagnose why get_chat_messages returned empty. Returns error message."""
+        if not self.current_room:
+            return "No room is open. Use /o <n> to open a room first."
+
+        search_name = self._strip_emoji(self.current_room)
+        app = self._get_ax_app()
+        windows = self._ax_val(app, 'AXWindows')
+        if windows:
+            for win in windows:
+                title = self._ax_val(win, 'AXTitle')
+                if title and search_name and search_name in title:
+                    return "Chat window is open but no messages loaded. Try /r to refresh."
+
+        return "Chat window not found. The room may have closed. Use /o to reopen."
+
+    def diagnose_send_failure(self) -> str:
+        """Diagnose why send_message failed. Returns error message."""
+        if not self.current_room:
+            return "No room is open. Use /o <n> to open a room first."
+
+        search_name = self._strip_emoji(self.current_room)
+        app = self._get_ax_app()
+        windows = self._ax_val(app, 'AXWindows')
+        if windows:
+            for win in windows:
+                title = self._ax_val(win, 'AXTitle')
+                if title and search_name and search_name in title:
+                    return "Chat window exists but input failed. KakaoTalk may be unresponsive. Try clicking the KakaoTalk window once."
+
+        return "Chat window not found. Use /o to reopen the room, then send again."
+
     def _find_ax_scroll_and_table(self, window_name: str) -> Tuple[Any, Any]:
         """Find scroll area and table in a window by name.
         For main window: matches any known main window title
