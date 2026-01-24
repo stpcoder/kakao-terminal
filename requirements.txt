@@ -1,0 +1,5 @@
+textual>=0.89.0
+rich>=13.0.0
+pyobjc-framework-ApplicationServices>=10.0
+pyobjc-framework-Quartz>=10.0
+pyobjc-framework-Cocoa>=10.0
