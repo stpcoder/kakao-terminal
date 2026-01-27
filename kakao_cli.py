@@ -25,7 +25,14 @@ def load_state() -> dict:
             return json.loads(STATE_FILE.read_text())
         except (json.JSONDecodeError, IOError):
             pass
-    return {"current_room": None, "session_sends": 0, "last_room_index": None}
+    return {
+        "current_room": None,
+        "session_sends": 0,
+        "last_room_index": None,
+        "room_offset": 0,
+        "msg_offset": 0,
+        "in_chat": False
+    }
 
 
 def save_state(state: dict) -> None:
@@ -78,14 +85,25 @@ def cmd_setup() -> None:
         print("  \u2192 Make sure the 'Chats' tab is selected (not Friends/More)")
 
 
-def cmd_list(limit: int = 10, offset: int = 0) -> None:
+def cmd_list(limit: int = 10, offset: int = -1) -> None:
     """List chat rooms."""
     bridge = KakaoBridge()
+    state = load_state()
+
+    # Use provided offset or state offset (-1 means use state)
+    if offset < 0:
+        offset = state.get("room_offset", 0)
+
     rooms = bridge.get_chat_rooms(limit=limit, offset=offset)
 
     if not rooms:
         print(f"\u2717 {bridge.diagnose_no_rooms()}")
         return
+
+    # Update state
+    state["room_offset"] = offset
+    state["in_chat"] = False
+    save_state(state)
 
     print(f"=== Chat Rooms ({offset + 1}-{offset + len(rooms)}) ===\n")
     for i, r in enumerate(rooms, offset + 1):
@@ -115,6 +133,8 @@ def cmd_open(target: str) -> None:
         if result:
             state["current_room"] = room.name
             state["last_room_index"] = idx
+            state["msg_offset"] = 0
+            state["in_chat"] = True
             save_state(state)
             print(f"\u2713 Opened: {room.name}")
         else:
@@ -124,6 +144,8 @@ def cmd_open(target: str) -> None:
         result = bridge.open_room_by_name(target)
         if result:
             state["current_room"] = target
+            state["msg_offset"] = 0
+            state["in_chat"] = True
             save_state(state)
             print(f"\u2713 Opened: {target}")
         else:
@@ -131,7 +153,7 @@ def cmd_open(target: str) -> None:
             print(f"  \u2192 Use /kakao-list to see available rooms")
 
 
-def cmd_read(limit: int = 20) -> None:
+def cmd_read(limit: int = 20, offset: int = -1) -> None:
     """Read messages from the current room."""
     state = load_state()
 
@@ -140,26 +162,37 @@ def cmd_read(limit: int = 20) -> None:
         print("  \u2192 Use /kakao-open <n> to open a room first")
         return
 
+    # Use provided offset or state offset
+    if offset < 0:
+        offset = state.get("msg_offset", 0)
+
     bridge = KakaoBridge()
     bridge.current_room = state["current_room"]
-    msgs = bridge.get_chat_messages(limit=limit)
+    msgs = bridge.get_chat_messages(limit=limit, msg_offset=offset)
 
     if not msgs:
         print(f"\u2717 {bridge.diagnose_no_messages()}")
         return
 
-    print(f"=== {state['current_room']} ===\n")
+    # Update state
+    state["msg_offset"] = offset
+    state["in_chat"] = True
+    save_state(state)
+
+    offset_str = f" (offset: {offset})" if offset > 0 else ""
+    print(f"=== {state['current_room']}{offset_str} ===\n")
     for m in msgs:
         if m.is_date:
             print(f"\n--- {m.text} ---\n")
-        elif m.text == "[Image]":
-            sender = m.sender or "Me"
-            time_str = f" [{m.time}]" if m.time else ""
-            print(f"{time_str} {sender}: [Image]")
         else:
-            sender = m.sender if not m.is_me else "Me"
+            sender = "Me" if m.is_me else (m.sender or "?")
             time_str = f"[{m.time}] " if m.time else ""
-            print(f"{time_str}{sender}: {m.text}")
+            read_str = f" ({m.read_count}명 안읽음)" if m.read_count > 0 else ""
+
+            if m.text == "[Image]":
+                print(f"{time_str}{sender}: [Image]{read_str}")
+            else:
+                print(f"{time_str}{sender}: {m.text}{read_str}")
 
 
 def cmd_send(message: str) -> None:
@@ -219,18 +252,143 @@ def cmd_status() -> None:
             print(f"Connection: \u26A0\uFE0F {diag}")
 
 
+def cmd_search(query: str) -> None:
+    """Search chat rooms by name."""
+    bridge = KakaoBridge()
+    rooms = bridge.search_rooms(query)
+
+    if not rooms:
+        print(f"\u2717 No rooms matching '{query}'")
+        return
+
+    print(f"=== Search Results: '{query}' ({len(rooms)} found) ===\n")
+    for i, r in enumerate(rooms, 1):
+        unread = f" ({r.unread} unread)" if r.unread > 0 else ""
+        print(f"{i}. {r.name}{unread}")
+
+
+def cmd_up(step: int = 10) -> None:
+    """Scroll up to see older messages."""
+    state = load_state()
+
+    if not state.get("current_room"):
+        print("\u2717 No room is open")
+        print("  \u2192 Use /kakao-open <n> to open a room first")
+        return
+
+    new_offset = state.get("msg_offset", 0) + step
+    state["msg_offset"] = new_offset
+    save_state(state)
+
+    cmd_read(limit=20, offset=new_offset)
+
+
+def cmd_down(step: int = 10) -> None:
+    """Scroll down to see newer messages."""
+    state = load_state()
+
+    if not state.get("current_room"):
+        print("\u2717 No room is open")
+        print("  \u2192 Use /kakao-open <n> to open a room first")
+        return
+
+    new_offset = max(0, state.get("msg_offset", 0) - step)
+    state["msg_offset"] = new_offset
+    save_state(state)
+
+    cmd_read(limit=20, offset=new_offset)
+
+
+def cmd_refresh() -> None:
+    """Refresh messages from the current room (reset to latest)."""
+    state = load_state()
+
+    if not state.get("current_room"):
+        print("\u2717 No room is open")
+        print("  \u2192 Use /kakao-open <n> to open a room first")
+        return
+
+    state["msg_offset"] = 0
+    save_state(state)
+
+    cmd_read(limit=20, offset=0)
+
+
+def cmd_rooms_next(step: int = 10) -> None:
+    """Show next page of chat rooms."""
+    state = load_state()
+    new_offset = state.get("room_offset", 0) + step
+    cmd_list(limit=10, offset=new_offset)
+
+
+def cmd_rooms_prev(step: int = 10) -> None:
+    """Show previous page of chat rooms."""
+    state = load_state()
+    new_offset = max(0, state.get("room_offset", 0) - step)
+    cmd_list(limit=10, offset=new_offset)
+
+
+def cmd_back() -> None:
+    """Go back to chat room list."""
+    state = load_state()
+    state["in_chat"] = False
+    state["msg_offset"] = 0
+    save_state(state)
+
+    print("\u2713 Back to room list")
+    cmd_list(limit=10, offset=state.get("room_offset", 0))
+
+
+def cmd_windows() -> None:
+    """Show list of open KakaoTalk windows."""
+    bridge = KakaoBridge()
+
+    try:
+        windows = bridge.get_open_windows()
+    except Exception as e:
+        print(f"\u2717 Failed to get windows: {e}")
+        return
+
+    if not windows:
+        print("\u2717 No KakaoTalk windows found")
+        print("  \u2192 Open KakaoTalk from the dock")
+        return
+
+    print("=== Open KakaoTalk Windows ===\n")
+    for i, w in enumerate(windows, 1):
+        type_icon = {
+            "main": "\U0001F4AC",  # 💬
+            "chat": "\U0001F5E8\uFE0F",  # 🗨️
+            "popup": "\U0001F4CB",  # 📋
+            "unknown": "?"
+        }.get(w["type"], "?")
+        name = w["name"] if w["name"] else "(unnamed)"
+        print(f"{i}. {type_icon} {name} [{w['type']}]")
+
+
 def cmd_help() -> None:
     """Show help."""
     print("""kakao-terminal CLI - Claude Code Skills integration
 
 Commands:
-  setup     Check prerequisites (KakaoTalk running, accessibility, etc.)
-  list      List chat rooms
-  open      Open a chat room by number or name
-  read      Read messages from the current room
-  send      Send a message to the current room
-  status    Show current status
-  help      Show this help
+  setup       Check prerequisites (KakaoTalk running, accessibility, etc.)
+  list        List chat rooms
+  open        Open a chat room by number or name
+  read        Read messages from the current room
+  send        Send a message to the current room
+  status      Show current status
+
+Navigation:
+  search      Search chat rooms by name
+  up          Scroll up to see older messages
+  down        Scroll down to see newer messages
+  refresh     Refresh messages (go to latest)
+  rooms-next  Show next 10 chat rooms
+  rooms-prev  Show previous 10 chat rooms
+  back        Go back to room list
+  windows     Show open KakaoTalk windows
+
+  help        Show this help
 
 Examples:
   python kakao_cli.py setup
@@ -240,6 +398,14 @@ Examples:
   python kakao_cli.py read
   python kakao_cli.py read 50
   python kakao_cli.py send "Hello!"
+  python kakao_cli.py search "친구"
+  python kakao_cli.py up
+  python kakao_cli.py down
+  python kakao_cli.py refresh
+  python kakao_cli.py rooms-next
+  python kakao_cli.py rooms-prev
+  python kakao_cli.py back
+  python kakao_cli.py windows
   python kakao_cli.py status
 """)
 
@@ -256,7 +422,7 @@ def main():
         cmd_setup()
     elif cmd == "list":
         limit = int(args[0]) if args and args[0].isdigit() else 10
-        offset = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
+        offset = int(args[1]) if len(args) > 1 and args[1].isdigit() else -1
         cmd_list(limit, offset)
     elif cmd == "open":
         if args:
@@ -273,6 +439,29 @@ def main():
             print("\u2717 Usage: send <message>")
     elif cmd == "status":
         cmd_status()
+    elif cmd == "search":
+        if args:
+            cmd_search(" ".join(args))
+        else:
+            print("\u2717 Usage: search <query>")
+    elif cmd == "up":
+        step = int(args[0]) if args and args[0].isdigit() else 10
+        cmd_up(step)
+    elif cmd == "down":
+        step = int(args[0]) if args and args[0].isdigit() else 10
+        cmd_down(step)
+    elif cmd == "refresh":
+        cmd_refresh()
+    elif cmd in ("rooms-next", "roomsnext"):
+        step = int(args[0]) if args and args[0].isdigit() else 10
+        cmd_rooms_next(step)
+    elif cmd in ("rooms-prev", "roomsprev"):
+        step = int(args[0]) if args and args[0].isdigit() else 10
+        cmd_rooms_prev(step)
+    elif cmd == "back":
+        cmd_back()
+    elif cmd == "windows":
+        cmd_windows()
     elif cmd in ("help", "-h", "--help"):
         cmd_help()
     else:
