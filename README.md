@@ -1,99 +1,114 @@
 # kakao-terminal
 
-회사에서 카톡하고 싶은데 눈치 보일 때 쓰는 터미널 카카오톡 클라이언트.
-옆에서 보면 그냥 터미널에서 코딩하는 것처럼 보인다.
+터미널에서 카카오톡을 제어하는 도구. Claude Code Skills와 CLI를 제공한다.
 
-카카오톡 창은 백그라운드에 숨겨두고, macOS Accessibility API로 메시지를 읽고 보낸다.
-카톡 창이 뜨지 않으니까 들킬 일이 없다.
+**핵심 기능:**
+- **Claude Code Skills (14개)**: 자연어로 카톡 제어 ("카톡 방 목록 보여줘")
+- **CLI (14개 명령어)**: 터미널에서 직접 실행 (`python kakao_cli.py list`)
+- **TUI**: 인터랙티브 터미널 UI (`python app.py`)
+
+회사에서 카톡하고 싶은데 눈치 보일 때 사용. 카카오톡 창은 백그라운드에 숨겨두고, macOS Accessibility API로 메시지를 읽고 보낸다. 옆에서 보면 터미널에서 코딩하는 것처럼 보인다.
 
 ---
 
 ## Claude Code Skills (2026)
 
-Claude Code에서 자연어로 카카오톡을 제어할 수 있다. 2026 Skills 형식으로 구성.
+Claude Code에서 자연어로 카카오톡을 제어. 2026 Skills 형식 적용.
 
-### 빠른 시작
+### 자연어 사용 예시
 
 ```
-"카톡 방 목록 보여줘" → Claude가 /kakao-list 실행
+"카톡 방 목록 보여줘" → /kakao-list
 "3번 방 열어줘" → /kakao-open 3
 "메시지 읽어줘" → /kakao-read
 "안녕하세요 보내줘" → /kakao-send 안녕하세요
 ```
 
-### Claude Skills 명령어
+### Skills 명령어 (14개)
 
-| 명령 | 설명 | 자연어 예시 |
-|------|------|------------|
-| `/kakao-setup` | 전제조건 체크 | "카톡 설정 확인해줘" |
-| `/kakao-list` | 채팅방 목록 | "카톡 방 목록" |
-| `/kakao-open <n>` | 방 열기 | "3번 방 열어" |
-| `/kakao-read` | 메시지 읽기 | "메시지 보여줘" |
-| `/kakao-send <msg>` | 메시지 전송 ⚠️ | "안녕 보내줘" |
-| `/kakao-status` | 상태 확인 | "카톡 상태" |
-| `/kakao-search <q>` | 방 검색 | "친구 검색해줘" |
-| `/kakao-up` | 이전 메시지 | "위로 스크롤" |
-| `/kakao-down` | 최신 메시지 | "아래로" |
-| `/kakao-refresh` | 새로고침 | "새로고침" |
-| `/kakao-rooms-next` | 다음 10개 방 | "다음 방들" |
+| 명령 | 설명 | 자연어 트리거 |
+|------|------|--------------|
+| `/kakao-setup` | 전제조건 체크 | "카톡 설정", "권한 확인" |
+| `/kakao-list` | 채팅방 목록 | "카톡 방 목록", "채팅방 보여줘" |
+| `/kakao-open <n>` | 방 열기 | "3번 방 열어", "채팅방 들어가줘" |
+| `/kakao-read` | 메시지 읽기 | "메시지 보여줘", "채팅 내용" |
+| `/kakao-send <msg>` | 메시지 전송 [주의] | "안녕 보내줘", "메시지 전송" |
+| `/kakao-status` | 상태 확인 | "카톡 상태", "연결 확인" |
+| `/kakao-search <q>` | 방 검색 | "친구 검색", "채팅방 찾기" |
+| `/kakao-up` | 이전 메시지 | "위로 스크롤", "이전 메시지" |
+| `/kakao-down` | 최신 메시지 | "아래로", "최신 메시지" |
+| `/kakao-refresh` | 새로고침 | "새로고침", "리프레시" |
+| `/kakao-rooms-next` | 다음 10개 방 | "다음 방들", "더 보기" |
 | `/kakao-rooms-prev` | 이전 10개 방 | "이전 방들" |
-| `/kakao-back` | 방 목록으로 | "뒤로 가기" |
-| `/kakao-windows` | 열린 창 목록 | "창 목록" |
+| `/kakao-back` | 방 목록으로 | "뒤로 가기", "방 목록" |
+| `/kakao-windows` | 열린 창 목록 | "창 목록", "열린 창" |
 
-⚠️ `/kakao-send`는 `disable-model-invocation: true`로 설정되어 Claude가 자동으로 메시지를 보낼 수 없음. 사용자가 직접 `/kakao-send`를 입력해야 함.
+**[주의] kakao-send**: `disable-model-invocation: true` 설정으로 Claude가 자동으로 메시지를 보낼 수 없음. 사용자가 직접 `/kakao-send`를 입력해야 함.
 
-### Skills 구조 (2026 형식)
+### Skills 파일 구조
 
 ```
 .claude/skills/
-├── kakao-list/SKILL.md       # 방 목록
-├── kakao-open/SKILL.md       # 방 열기
-├── kakao-read/SKILL.md       # 메시지 읽기
-├── kakao-send/SKILL.md       # 메시지 전송 (자동호출 불가)
-├── kakao-search/SKILL.md     # 방 검색
-├── kakao-up/SKILL.md         # 이전 메시지
-├── kakao-down/SKILL.md       # 최신 메시지
-├── kakao-refresh/SKILL.md    # 새로고침
-├── kakao-rooms-next/SKILL.md # 다음 방 목록
-├── kakao-rooms-prev/SKILL.md # 이전 방 목록
-├── kakao-back/SKILL.md       # 뒤로가기
-├── kakao-windows/SKILL.md    # 창 목록
-├── kakao-setup/SKILL.md      # 설정 체크
-└── kakao-status/SKILL.md     # 상태 확인
+├── kakao-list/SKILL.md
+├── kakao-open/SKILL.md
+├── kakao-read/SKILL.md
+├── kakao-send/SKILL.md       ← disable-model-invocation: true
+├── kakao-search/SKILL.md
+├── kakao-up/SKILL.md
+├── kakao-down/SKILL.md
+├── kakao-refresh/SKILL.md
+├── kakao-rooms-next/SKILL.md
+├── kakao-rooms-prev/SKILL.md
+├── kakao-back/SKILL.md
+├── kakao-windows/SKILL.md
+├── kakao-setup/SKILL.md
+└── kakao-status/SKILL.md
+```
+
+### SKILL.md 형식 (2026)
+
+```yaml
+---
+name: kakao-send
+description: 카카오톡 메시지 전송. "카톡 보내줘", "메시지 전송" 시 사용.
+user-invocable: true
+disable-model-invocation: true   # Claude 자동 호출 방지
+allowed-tools: Bash
+argument-hint: <메시지>
+---
+
+# 본문 (실행할 bash 명령어 포함)
 ```
 
 ---
 
-## CLI 직접 사용
+## CLI (14개 명령어)
 
-Claude Code 없이 터미널에서 직접 사용 가능:
+Claude Code 없이 터미널에서 직접 실행.
+
+### 기본 워크플로우
 
 ```bash
-# 설치 후
 source venv/bin/activate
 
-# 기본 워크플로우
 python kakao_cli.py setup          # 전제조건 체크
 python kakao_cli.py list           # 방 목록
 python kakao_cli.py open 3         # 3번 방 열기
-python kakao_cli.py read           # 메시지 읽기 (안읽은 수, 시간 포함)
+python kakao_cli.py read           # 메시지 읽기
 python kakao_cli.py send "안녕"    # 메시지 전송
-
-# 네비게이션
-python kakao_cli.py search "친구"  # 방 검색
-python kakao_cli.py up             # 이전 메시지 (스크롤)
-python kakao_cli.py down           # 최신 메시지
-python kakao_cli.py refresh        # 새로고침
-python kakao_cli.py rooms-next     # 다음 10개 방
-python kakao_cli.py rooms-prev     # 이전 10개 방
-python kakao_cli.py back           # 방 목록으로
-
-# 상태 확인
-python kakao_cli.py status         # 연결 상태
-python kakao_cli.py windows        # 열린 창 목록
 ```
 
-### CLI 출력 예시
+### 전체 명령어
+
+```bash
+# 기본
+setup, list, open, read, send, status
+
+# 네비게이션
+search, up, down, refresh, rooms-next, rooms-prev, back, windows
+```
+
+### 출력 예시
 
 ```
 === 친구이름 ===
@@ -110,13 +125,12 @@ python kakao_cli.py windows        # 열린 창 목록
 
 ### 상태 파일
 
-세션 상태는 `~/.kakao-terminal-state.json`에 저장:
+`~/.kakao-terminal-state.json`:
 
 ```json
 {
   "current_room": "친구이름",
   "session_sends": 5,
-  "last_room_index": 3,
   "room_offset": 0,
   "msg_offset": 0,
   "in_chat": true
@@ -127,14 +141,11 @@ python kakao_cli.py windows        # 열린 창 목록
 
 ## TUI 모드
 
-인터랙티브 터미널 UI로도 사용 가능:
+인터랙티브 터미널 UI:
 
 ```bash
-source venv/bin/activate
 python app.py
 ```
-
-### TUI 명령어
 
 | 키 | 설명 |
 |----|------|
@@ -144,65 +155,53 @@ python app.py
 | /r | 새로고침 |
 | /u /d | 스크롤 |
 | /b | 뒤로 |
-| /c | 화면 정리 |
 | /q | 종료 |
-
-방에 들어가면 텍스트 입력 즉시 전송. 화살표 키로도 스크롤 가능.
 
 ---
 
 ## 설치
 
 ```bash
-git clone https://github.com/stpcoder/kakao-terminal.git && cd kakao-terminal
+git clone https://github.com/stpcoder/kakao-terminal.git
+cd kakao-terminal
 ./setup.sh
 source venv/bin/activate
 ```
 
-### 필요한 것
+### 요구사항
 
-- macOS 12 (Monterey) 이상
-- KakaoTalk Mac 앱 (v26.1.1에서 테스트됨)
+- macOS 12+ (Monterey)
+- KakaoTalk Mac (v26.1.1 테스트됨)
 - Python 3.10+
-- 터미널에 접근성 권한 (시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용)
+- 접근성 권한 (시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용)
 
-### 호환성
+### 언어 지원
 
-| 항목 | 지원 범위 |
-|------|-----------|
-| macOS | 12 (Monterey) 이상 |
-| KakaoTalk | v26.1.1에서 테스트됨 |
-| Python | 3.10+ |
-| 시스템 언어 | 한국어, English, 日本語 |
-
-카카오톡 Mac은 자체 언어 설정 없이 시스템 언어를 따른다.
-시간(오전/오후, AM/PM, 午前/午後), 날짜, 윈도우 타이틀, 탭 이름 전부 자동 대응.
+한국어, English, 日本語 (시스템 언어 자동 감지)
 
 ---
 
 ## 경고
 
-자동화된 메시지 전송은 카카오톡 이용약관 위반 가능성이 있으며, 계정 정지 위험이 있다. 개인 용도로만 사용하고, 과도한 자동화는 피해야 한다.
+자동화된 메시지 전송은 카카오톡 이용약관 위반 가능성이 있으며, 계정 정지 위험이 있다.
 
 **보호 장치:**
-- Rate limiting: 메시지 전송 간 500ms+ 딜레이
-- 랜덤 지터: 100-300ms 추가 딜레이
+- Rate limiting: 500ms+ 딜레이
+- 랜덤 지터: 100-300ms 추가
 - 세션 추적: 50개 메시지 초과 시 경고
 - Claude 자동 전송 방지: `disable-model-invocation: true`
 
 ---
 
-## 구조
+## 프로젝트 구조
 
 ```
-app.py            TUI (Textual)
 kakao_bridge.py   카카오톡 Accessibility API 브릿지
-kakao_cli.py      Claude Code용 CLI 래퍼 (14개 명령어)
-.claude/skills/   Claude Code Skills (2026 형식, 14개)
+kakao_cli.py      CLI (14개 명령어)
+app.py            TUI (Textual)
+.claude/skills/   Claude Code Skills (14개)
 ```
 
 ## 동작 원리
 
-카카오톡의 AX 트리를 직접 읽어서 메시지를 가져온다.
-방 열기랑 메시지 전송만 AppleScript를 쓰고, 나머지는 전부 AX API.
-카카오톡 창을 포그라운드로 안 가져오니까 다른 작업하면서 써도 된다.
+카카오톡의 AX 트리를 직접 읽어서 메시지를 가져온다. 방 열기와 메시지 전송만 AppleScript를 사용하고, 나머지는 전부 AX API. 카카오톡 창을 포그라운드로 가져오지 않아서 다른 작업하면서 사용 가능.
