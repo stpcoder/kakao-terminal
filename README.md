@@ -32,7 +32,7 @@ source venv/bin/activate
 python app.py
 ```
 
-## 명령어
+## 명령어 (TUI 모드)
 
 | 키 | 설명 |
 |----|------|
@@ -47,11 +47,89 @@ python app.py
 
 방에 들어가면 텍스트 입력 즉시 전송. 화살표 키로도 스크롤 가능.
 
+---
+
+## Claude Code 통합
+
+Claude Code에서 카카오톡을 제어할 수 있다. `.claude/commands/` 폴더에 Skill 파일들이 있다.
+
+### 사전 조건
+
+1. **kakao-terminal 설치** - 위 설치 과정 완료
+2. **접근성 권한** - Claude Code를 실행하는 터미널에 권한 부여
+3. **KakaoTalk 실행** - 채팅 탭이 열려 있어야 함
+
+### 워크플로우
+
+```
+/kakao-setup → /kakao-list → /kakao-open 3 → /kakao-read or /kakao-send
+```
+
+### Claude Code 명령어
+
+| 명령 | 설명 |
+|------|------|
+| `/kakao-setup` | 전제조건 체크 (권한, 카톡 상태) |
+| `/kakao-list` | 채팅방 목록 조회 |
+| `/kakao-open <n>` | n번 채팅방 열기 |
+| `/kakao-read` | 현재 방 메시지 읽기 |
+| `/kakao-send <msg>` | 메시지 전송 |
+| `/kakao-status` | 연결 상태 확인 |
+
+### 자연어 호출
+
+Claude에게 자연어로 요청하면 자동으로 해당 명령이 실행된다:
+
+- "카톡 방 목록 보여줘" → `/kakao-list`
+- "3번 방 열어" → `/kakao-open 3`
+- "메시지 읽어줘" → `/kakao-read`
+- "안녕하세요 보내줘" → `/kakao-send 안녕하세요`
+
+### 상태 파일
+
+세션 상태는 `~/.kakao-terminal-state.json`에 저장된다:
+
+```json
+{
+  "current_room": "친구이름",
+  "session_sends": 5,
+  "last_room_index": 3
+}
+```
+
+### CLI 직접 사용
+
+Claude Code 없이 CLI로도 사용 가능:
+
+```bash
+python kakao_cli.py setup
+python kakao_cli.py list
+python kakao_cli.py open 3
+python kakao_cli.py read
+python kakao_cli.py send "안녕하세요"
+python kakao_cli.py status
+```
+
+---
+
+## 경고
+
+자동화된 메시지 전송은 카카오톡 이용약관 위반 가능성이 있으며, 계정 정지 위험이 있다. 개인 용도로만 사용하고, 과도한 자동화는 피해야 한다.
+
+보호 장치:
+- Rate limiting: 메시지 전송 간 500ms+ 딜레이
+- 랜덤 지터: 100-300ms 추가 딜레이
+- 세션 추적: 50개 메시지 초과 시 경고
+
+---
+
 ## 구조
 
 ```
 app.py            TUI (Textual)
 kakao_bridge.py   카카오톡 Accessibility API 브릿지
+kakao_cli.py      Claude Code용 CLI 래퍼
+.claude/commands/ Claude Code Skill 파일
 ```
 
 ## 동작 원리
