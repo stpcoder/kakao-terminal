@@ -517,19 +517,12 @@ class KakaoTerminal(App):
                 safe_room = self._escape_markup(room_name)
                 log.write(f"[yellow]{SPINNER_FRAMES[0]}[/] Connecting to '{safe_room}'...")
 
-                # In the TUI, force AXPress-only room opening so we can confirm
-                # whether foreground jumping comes from the raise+Return fallback.
+                # Use the normal open strategy here. The bridge prefers direct press
+                # and falls back to raise+Return when KakaoTalk requires it.
                 if row_index > 0:
-                    success = self.kakao.open_room_by_index(
-                        row_index,
-                        room_name,
-                        allow_raise_fallback=False,
-                    )
+                    success = self.kakao.open_room_by_index(row_index, room_name)
                 else:
-                    success = self.kakao.open_room_by_name(
-                        room_name,
-                        allow_raise_fallback=False,
-                    )
+                    success = self.kakao.open_room_by_name(room_name)
 
                 if success:
                     self.current_room = room_name
@@ -542,9 +535,7 @@ class KakaoTerminal(App):
                     self.messages = []
                     await self._fetch_and_display_messages(log)
                 else:
-                    log.write(f"[red]✗[/] Failed to open '{safe_room}' with AXPress-only mode.")
-                    log.write("[dim]  This means the old raise+Return fallback was likely doing the real work.[/]")
-                    log.write("[dim]  CLI fallback is still available while we test a better no-focus-open strategy.[/]")
+                    log.write(f"[red]✗[/] Failed to open '{safe_room}'. Make sure KakaoTalk main window is on the Chats tab and try /l again.")
             else:
                 log.write("[yellow]Usage:[/] /o <number> or /o <name>")
                 log.write("[dim]  Run /l first to see the list[/]")
