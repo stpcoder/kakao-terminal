@@ -591,6 +591,52 @@ end tell
         except (ValueError, TypeError):
             return False
 
+    def _is_sender_candidate_text(self, text: str) -> bool:
+        """Check if text is a plausible sender label, not message metadata."""
+        if not text:
+            return False
+        text = text.strip()
+        if not text or '\n' in text:
+            return False
+        if len(text) > 40:
+            return False
+        if self._is_time_string(text) or self._is_date_string(text) or self._is_read_count(text):
+            return False
+        return True
+
+    def _find_sender_label(self, st_elems: List[Tuple[str, Any]], threshold: float, ta_y: float = 0.0) -> str:
+        """Find a likely sender label for received messages.
+
+        Sender labels in KakaoTalk are short, single-line texts shown on the left side
+        above or near the message bubble. Long message fragments should not match here.
+        """
+        for val, elem in st_elems:
+            if not self._is_sender_candidate_text(val):
+                continue
+
+            st_pos = self._ax_val(elem, 'AXPosition')
+            if st_pos:
+                st_x, st_y = self._ax_coord(st_pos)
+                if st_x > threshold:
+                    continue
+                if ta_y > 5 and st_y > ta_y + 12:
+                    continue
+            return val.strip()
+        return ""
+
+    def _has_profile_image(self, children: List[Any]) -> bool:
+        """Detect the small profile image used on received text messages."""
+        for child in children:
+            if self._ax_val(child, 'AXRole') != 'AXImage':
+                continue
+            sz = self._ax_val(child, 'AXSize')
+            if not sz:
+                continue
+            iw, ih = self._ax_coord(sz)
+            if 0 < iw < 60 and 0 < ih < 60:
+                return True
+        return False
+
     def scroll_to_bottom(self) -> None:
         """Scroll the current chat room's message view to the bottom."""
         search_name = self._strip_emoji(self.current_room) if self.current_room else ""
@@ -676,6 +722,7 @@ end tell
             start_idx = max(0, end_idx - fetch_rows)
             messages = []
             last_sender = ""
+            last_is_me: Optional[bool] = None
 
             # If reading off-screen rows, scroll the view to make them visible
             vbar = None
@@ -699,7 +746,7 @@ end tell
                     except Exception:
                         vbar = None  # scroll failed, proceed anyway
 
-            # Pre-scan 3 rows before start to establish sender context
+            # Pre-scan a few rows to establish sender and side context.
             if start_idx > 0:
                 for row in rows[max(0, start_idx - 3):start_idx]:
                     cells = self._ax_val(row, 'AXChildren')
@@ -708,15 +755,32 @@ end tell
                     children = self._ax_val(cells[0], 'AXChildren')
                     if not children:
                         continue
+                    ta_elem = None
+                    st_elems = []
                     for child in children:
                         role = self._ax_val(child, 'AXRole')
-                        if role == 'AXStaticText':
+                        if role == 'AXTextArea' and ta_elem is None:
+                            ta_elem = child
+                        elif role == 'AXStaticText':
                             v = self._ax_val(child, 'AXValue')
-                            if v and not self._is_time_string(v) and '\n' not in v:
-                                try:
-                                    int(v)
-                                except (ValueError, TypeError):
-                                    last_sender = v
+                            if v:
+                                st_elems.append((v, child))
+
+                    ta_y = 0.0
+                    ta_x = 0.0
+                    if ta_elem:
+                        ta_pos = self._ax_val(ta_elem, 'AXPosition')
+                        if ta_pos:
+                            ta_x, ta_y = self._ax_coord(ta_pos)
+                    sender_label = self._find_sender_label(st_elems, threshold, ta_y=ta_y)
+                    has_profile = self._has_profile_image(children)
+                    if ta_x > 5:
+                        last_is_me = ta_x > threshold
+                    elif sender_label or has_profile:
+                        last_is_me = False
+
+                    if sender_label:
+                        last_sender = sender_label
 
             for row in rows[start_idx:end_idx]:
                 cells = self._ax_val(row, 'AXChildren')
@@ -793,36 +857,28 @@ end tell
                 if not ta_val or len(ta_val) == 0 or len(ta_val) > 1000:
                     continue
 
-                # Determine is_me from text area x-position
+                ta_y = 0.0
                 ta_pos = self._ax_val(ta_elem, 'AXPosition')
                 ta_x = 0.0
                 if ta_pos:
-                    ta_x, _ = self._ax_coord(ta_pos)
+                    ta_x, ta_y = self._ax_coord(ta_pos)
+
+                sender_label = self._find_sender_label(st_elems, threshold, ta_y=ta_y)
+                has_profile = self._has_profile_image(children)
+
+                # Determine is_me from text area x-position
                 if ta_x > 5:  # valid position (not off-screen 0,0)
                     is_me = ta_x > threshold
                 else:
-                    # Fallback: check if row has sender name or profile image
-                    # Sent messages have no sender/profile; received first-in-seq do
-                    has_sender_or_profile = False
-                    for child in children:
-                        role = self._ax_val(child, 'AXRole')
-                        if role == 'AXStaticText':
-                            v = self._ax_val(child, 'AXValue')
-                            if v and not self._is_time_string(v) and '\n' not in v:
-                                try:
-                                    int(v)
-                                except (ValueError, TypeError):
-                                    if not self._is_date_string(v):
-                                        has_sender_or_profile = True
-                                        break
-                        elif role == 'AXImage':
-                            sz = self._ax_val(child, 'AXSize')
-                            if sz:
-                                iw, ih = self._ax_coord(sz)
-                                if iw < 60 and ih < 60:  # profile pic
-                                    has_sender_or_profile = True
-                                    break
-                    is_me = not has_sender_or_profile
+                    # Fallback: only trust strong received-side markers.
+                    # If the row is partially visible, preserve the previous side context
+                    # instead of misclassifying long sent messages as received.
+                    if sender_label or has_profile:
+                        is_me = False
+                    elif last_is_me is not None:
+                        is_me = last_is_me
+                    else:
+                        is_me = True
 
                 # Classify static texts into time, read_count, sender
                 # KakaoTalk combines read_count + time in one element: "1\n오후 3:32"
@@ -851,15 +907,18 @@ end tell
                                 elif not is_me and st_x > ta_x:
                                     read_count = int(part)
                                     is_metadata = True
-                    if not is_metadata and not sender:
-                        sender = val
+                    if not is_metadata and not sender and self._is_sender_candidate_text(val):
+                        sender = val.strip()
 
                 # For non-me messages, use last_sender if no sender found
                 if not is_me:
                     if not sender:
+                        sender = sender_label
+                    if not sender:
                         sender = last_sender
                     else:
                         last_sender = sender
+                last_is_me = is_me
 
                 messages.append(Message(
                     sender=sender, text=ta_val, time=msg_time,
