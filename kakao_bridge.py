@@ -498,6 +498,11 @@ end tell
         if not message:
             return False
 
+        # KakaoTalk can refuse to send while the message list is scrolled up.
+        # Always return to the latest position before targeting the input area.
+        self.scroll_to_bottom()
+        time.sleep(0.12)
+
         # Escape quotes for AppleScript string
         safe_msg = message.replace('\\', '\\\\').replace('"', '\\"')
 
@@ -530,7 +535,12 @@ end tell
 '''
         result = self._run_applescript(script, timeout=5)
         if "ready" not in result:
-            return False
+            # One more attempt after forcing the chat to the bottom again.
+            self.scroll_to_bottom()
+            time.sleep(0.2)
+            result = self._run_applescript(script, timeout=5)
+            if "ready" not in result:
+                return False
 
         time.sleep(0.1)
         self._send_key(36)  # Return key to send

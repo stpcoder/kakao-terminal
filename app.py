@@ -649,10 +649,12 @@ class KakaoTerminal(App):
             log.write("[yellow]⚠[/] Select a room first with /o <name>")
             return
 
-        # If scrolled up, scroll back to bottom first
+        # If the user is reading older messages, return to the latest position first.
         if self.msg_offset > 0:
+            log.write("[dim]⏺[/] Returning to latest messages before sending...")
             self.msg_offset = 0
             self.kakao.scroll_to_bottom()
+            await asyncio.sleep(0.15)
 
         # 가짜 전송 로그 (딜레이 없이)
         log.write(f"[dim]⏺[/] Sending...")
