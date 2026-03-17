@@ -478,8 +478,8 @@ end tell
         self._send_key(36)  # Return key
         return True
 
-    def open_room_by_index(self, row_index: int, room_name: str = "") -> bool:
-        """Open chat room by row index. Prefer direct press, then fall back to raise+Return."""
+    def open_room_by_index(self, row_index: int, room_name: str = "", allow_raise_fallback: bool = True) -> bool:
+        """Open chat room by row index. Prefer direct press, then optionally fall back."""
         opened = self._open_room_by_index_press(row_index)
         if opened:
             time.sleep(0.3)
@@ -491,6 +491,9 @@ end tell
             else:
                 self.current_room = room_name
                 return True
+
+        if not allow_raise_fallback:
+            return False
 
         if not self._open_room_by_index_raise(row_index):
             return False
@@ -593,8 +596,8 @@ end tell
         self._send_key(36)  # Return key
         return True
 
-    def open_room_by_name(self, room_name: str) -> bool:
-        """Open chat room by name. Prefer direct press, then fall back to raise+Return."""
+    def open_room_by_name(self, room_name: str, allow_raise_fallback: bool = True) -> bool:
+        """Open chat room by name. Prefer direct press, then optionally fall back."""
         search_name = self._strip_emoji(room_name)
         if not search_name:
             return False
@@ -605,6 +608,9 @@ end tell
             if self._chat_window_exists(search_name):
                 self.current_room = room_name
                 return True
+
+        if not allow_raise_fallback:
+            return False
 
         if not self._open_room_by_name_raise(room_name):
             return False
