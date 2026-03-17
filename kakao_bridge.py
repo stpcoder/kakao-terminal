@@ -546,6 +546,63 @@ end tell
         self._send_key(36)  # Return key to send
         return True
 
+    def _chat_window_exists(self, search_name: str) -> bool:
+        """Check whether a chat window matching the room name is still open."""
+        app = self._get_ax_app()
+        windows = self._ax_val(app, 'AXWindows')
+        if not windows:
+            return False
+        for win in windows:
+            title = self._ax_val(win, 'AXTitle')
+            if title and search_name in title and not self._is_main_window(title):
+                return True
+        return False
+
+    def close_current_chat(self) -> bool:
+        """Close the currently open chat window without closing the main room list."""
+        if not self.current_room:
+            return False
+
+        search_name = self._strip_emoji(self.current_room)
+        if not search_name:
+            return False
+
+        script = f'''
+tell application "System Events"
+    tell process "KakaoTalk"
+        repeat with w in windows
+            if name of w contains "{search_name}" then
+                try
+                    perform action "AXRaise" of w
+                end try
+                try
+                    perform action "AXClose" of w
+                    return "closed"
+                on error
+                    return "escape"
+                end try
+            end if
+        end repeat
+        return "not found"
+    end tell
+end tell
+'''
+        result = self._run_applescript(script, timeout=5)
+        if "closed" in result:
+            time.sleep(0.15)
+            self.current_room = None
+            return True
+
+        if "escape" in result:
+            time.sleep(0.1)
+            self._send_key(53)  # Escape
+            time.sleep(0.2)
+            if not self._chat_window_exists(search_name):
+                self.current_room = None
+                return True
+
+        return False
+
     @staticmethod
     def _is_time_string(text: str) -> bool:
         """Check if a string looks like a KakaoTalk time stamp.

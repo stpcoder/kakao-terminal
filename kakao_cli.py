@@ -331,11 +331,22 @@ def cmd_rooms_prev(step: int = 10) -> None:
 def cmd_back() -> None:
     """Go back to chat room list."""
     state = load_state()
+    closed = False
+    if state.get("current_room"):
+        bridge = KakaoBridge()
+        bridge.current_room = state["current_room"]
+        closed = bridge.close_current_chat()
+
+    state["current_room"] = None
     state["in_chat"] = False
     state["msg_offset"] = 0
     save_state(state)
 
-    print("\u2713 Back to room list")
+    if closed:
+        print("\u2713 Closed chat and returned to room list")
+    else:
+        print("\u2713 Back to room list")
+        print("  \u2192 Chat window may still be open")
     cmd_list(limit=10, offset=state.get("room_offset", 0))
 
 

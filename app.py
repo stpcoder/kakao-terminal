@@ -613,10 +613,20 @@ class KakaoTerminal(App):
 
         elif command in ("b", "back"):
             if self.in_chat:
+                closed = False
+                if self.current_room:
+                    self.kakao.current_room = self.current_room
+                    closed = self.kakao.close_current_chat()
                 self.in_chat = False
                 self.in_room_list = True
+                self.msg_offset = 0
+                self.messages = []
                 self.current_room = None
-                log.write("[dim]⏺[/] Back to room list")
+                if closed:
+                    log.write("[dim]⏺[/] Closed chat and returned to room list")
+                else:
+                    log.write("[dim]⏺[/] Back to room list")
+                    log.write("[dim]  Chat window may still be open[/]")
                 log.write("[dim]  /l to refresh | ↓ more rooms[/]")
             else:
                 log.write("[dim]Already at room list[/]")
