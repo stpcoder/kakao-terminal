@@ -406,8 +406,45 @@ end tell
         conditions = [f'name of w is "{n}"' for n in self.MAIN_WINDOW_NAMES]
         return "(" + " or ".join(conditions) + ")"
 
-    def open_room_by_index(self, row_index: int, room_name: str = "") -> bool:
-        """Open chat room by row index - background, no window activation"""
+    def _open_room_by_index_press(self, row_index: int) -> bool:
+        """Try to open a room by pressing the row directly, without raising the window."""
+        main_check = self._as_main_window_check()
+        script = f'''
+tell application "System Events"
+    tell process "KakaoTalk"
+        repeat with w in windows
+            if {main_check} then
+                tell w
+                    tell scroll area 1
+                        tell table 1
+                            try
+                                perform action "AXPress" of row {row_index}
+                                return "pressed-row"
+                            end try
+                            try
+                                perform action "AXPress" of UI element 1 of row {row_index}
+                                return "pressed-cell"
+                            end try
+                            try
+                                set selected of row {row_index} to true
+                                return "selected-only"
+                            on error
+                                return "not found"
+                            end try
+                        end tell
+                    end tell
+                end tell
+            end if
+        end repeat
+        return "not found"
+    end tell
+end tell
+'''
+        result = self._run_applescript(script, timeout=5)
+        return any(token in result for token in ("pressed-row", "pressed-cell"))
+
+    def _open_room_by_index_raise(self, row_index: int) -> bool:
+        """Fallback strategy: raise the main window and send Return."""
         main_check = self._as_main_window_check()
         script = f'''
 tell application "System Events"
@@ -425,7 +462,6 @@ tell application "System Events"
                         end tell
                     end tell
                 end tell
-                -- Make main window the key window so Return goes here
                 perform action "AXRaise" of w
                 return "ok"
             end if
@@ -440,13 +476,81 @@ end tell
 
         time.sleep(0.1)
         self._send_key(36)  # Return key
+        return True
+
+    def open_room_by_index(self, row_index: int, room_name: str = "") -> bool:
+        """Open chat room by row index. Prefer direct press, then fall back to raise+Return."""
+        opened = self._open_room_by_index_press(row_index)
+        if opened:
+            time.sleep(0.3)
+            if room_name:
+                search_name = self._strip_emoji(room_name)
+                if search_name and self._chat_window_exists(search_name):
+                    self.current_room = room_name
+                    return True
+            else:
+                self.current_room = room_name
+                return True
+
+        if not self._open_room_by_index_raise(row_index):
+            return False
+
         time.sleep(0.3)  # Wait for chat window to open
+        if room_name:
+            search_name = self._strip_emoji(room_name)
+            if search_name and not self._chat_window_exists(search_name):
+                return False
 
         self.current_room = room_name
         return True
 
-    def open_room_by_name(self, room_name: str) -> bool:
-        """Open chat room by name - background, no window activation"""
+    def _open_room_by_name_press(self, room_name: str) -> bool:
+        """Try to open a room by pressing the matching row directly."""
+        search_name = self._strip_emoji(room_name)
+        if not search_name:
+            return False
+
+        main_check = self._as_main_window_check()
+        script = f'''
+tell application "System Events"
+    tell process "KakaoTalk"
+        repeat with w in windows
+            if {main_check} then
+                tell w
+                    tell scroll area 1
+                        tell table 1
+                            repeat with i from 1 to count of rows
+                                try
+                                    set cellElem to UI element 1 of row i
+                                    set rName to value of static text 1 of cellElem
+                                    if rName contains "{search_name}" then
+                                        try
+                                            perform action "AXPress" of row i
+                                            return "pressed-row"
+                                        end try
+                                        try
+                                            perform action "AXPress" of cellElem
+                                            return "pressed-cell"
+                                        end try
+                                        set selected of row i to true
+                                        return "selected-only"
+                                    end if
+                                end try
+                            end repeat
+                        end tell
+                    end tell
+                end tell
+            end if
+        end repeat
+        return "not found"
+    end tell
+end tell
+'''
+        result = self._run_applescript(script, timeout=8)
+        return any(token in result for token in ("pressed-row", "pressed-cell"))
+
+    def _open_room_by_name_raise(self, room_name: str) -> bool:
+        """Fallback strategy: select the row, raise the main window, and send Return."""
         search_name = self._strip_emoji(room_name)
         if not search_name:
             return False
@@ -473,7 +577,6 @@ tell application "System Events"
                         end tell
                     end tell
                 end tell
-                -- Make main window the key window so Return goes here
                 perform action "AXRaise" of w
                 return "ok"
             end if
@@ -488,7 +591,27 @@ end tell
 
         time.sleep(0.1)
         self._send_key(36)  # Return key
+        return True
+
+    def open_room_by_name(self, room_name: str) -> bool:
+        """Open chat room by name. Prefer direct press, then fall back to raise+Return."""
+        search_name = self._strip_emoji(room_name)
+        if not search_name:
+            return False
+
+        opened = self._open_room_by_name_press(room_name)
+        if opened:
+            time.sleep(0.3)
+            if self._chat_window_exists(search_name):
+                self.current_room = room_name
+                return True
+
+        if not self._open_room_by_name_raise(room_name):
+            return False
+
         time.sleep(0.3)  # Wait for chat window to open
+        if not self._chat_window_exists(search_name):
+            return False
 
         self.current_room = room_name
         return True
