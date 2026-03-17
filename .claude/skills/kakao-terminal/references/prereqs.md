@@ -22,3 +22,9 @@ The bundled `kakao-terminal` skill works only when all of the following are true
   Grant permission to the terminal app, then retry.
 - `Cannot read chat list`
   Switch KakaoTalk to the Chats tab instead of Friends or More.
+
+## Responsibility
+
+Use of this skill is at the user's own risk.
+
+The author does not guarantee account safety or policy compliance and is not responsible for account restrictions, service blocks, message failures, data loss, or other consequences caused by automation through this project.

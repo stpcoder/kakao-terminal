@@ -37,3 +37,4 @@ Examples:
 - Only use `send` when the user explicitly asks to send a message.
 - If setup fails, read `references/prereqs.md` and report the missing prerequisite instead of retrying blindly.
 - This skill only works on macOS with KakaoTalk running and accessibility permission granted to the terminal app.
+- Use this skill at your own risk. The author is not responsible for account restrictions, policy violations, delivery failures, data loss, or other damage caused by its use.
