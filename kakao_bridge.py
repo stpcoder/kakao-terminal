@@ -704,6 +704,35 @@ end tell
                 return True
         return False
 
+    def _infer_is_me_from_frame(self, elem: Any, container_x: float, container_w: float) -> Optional[bool]:
+        """Infer message side from the full rendered frame.
+
+        Long sent bubbles can stretch far to the left. Using only the left edge causes
+        them to look like received messages, so compare both outer gaps first.
+        """
+        if not elem or container_w <= 0:
+            return None
+
+        elem_pos = self._ax_val(elem, 'AXPosition')
+        elem_size = self._ax_val(elem, 'AXSize')
+        if not elem_pos or not elem_size:
+            return None
+
+        elem_x, _ = self._ax_coord(elem_pos)
+        elem_w, _ = self._ax_coord(elem_size)
+        if elem_x <= 0 or elem_w <= 0:
+            return None
+
+        left_gap = max(0.0, elem_x - container_x)
+        right_edge = elem_x + elem_w
+        right_gap = max(0.0, (container_x + container_w) - right_edge)
+
+        if abs(left_gap - right_gap) >= 8:
+            return right_gap < left_gap
+
+        center_x = elem_x + (elem_w / 2.0)
+        return center_x > (container_x + (container_w / 2.0))
+
     def scroll_to_bottom(self) -> None:
         """Scroll the current chat room's message view to the bottom."""
         search_name = self._strip_emoji(self.current_room) if self.current_room else ""
@@ -772,8 +801,10 @@ end tell
             if sa_pos and sa_size:
                 cell_x, _ = self._ax_coord(sa_pos)
                 cell_w, _ = self._ax_coord(sa_size)
-                threshold = cell_x + (cell_w * 0.3)
+                threshold = cell_x + (cell_w * 0.5)
             else:
+                cell_x = 0.0
+                cell_w = 0.0
                 threshold = 99999  # fallback: assume nothing is "me"
 
             rows = self._ax_val(table, 'AXRows')
@@ -841,8 +872,9 @@ end tell
                             ta_x, ta_y = self._ax_coord(ta_pos)
                     sender_label = self._find_sender_label(st_elems, threshold, ta_y=ta_y)
                     has_profile = self._has_profile_image(children)
-                    if ta_x > 5:
-                        last_is_me = ta_x > threshold
+                    inferred_side = self._infer_is_me_from_frame(ta_elem, cell_x, cell_w)
+                    if inferred_side is not None:
+                        last_is_me = inferred_side
                     elif sender_label or has_profile:
                         last_is_me = False
 
@@ -889,14 +921,8 @@ end tell
                     else:
                         # Image message (no TextArea, has large image)
                         if large_img_elem:
-                            # Determine is_me from image position
-                            img_pos = self._ax_val(large_img_elem, 'AXPosition')
-                            img_x = 0.0
-                            if img_pos:
-                                img_x, _ = self._ax_coord(img_pos)
-                            if img_x > 5:
-                                is_me_img = img_x > threshold
-                            else:
+                            is_me_img = self._infer_is_me_from_frame(large_img_elem, cell_x, cell_w)
+                            if is_me_img is None:
                                 # Fallback: received images always have sender name
                                 has_sender = False
                                 for val, _ in st_elems:
@@ -933,9 +959,10 @@ end tell
                 sender_label = self._find_sender_label(st_elems, threshold, ta_y=ta_y)
                 has_profile = self._has_profile_image(children)
 
-                # Determine is_me from text area x-position
-                if ta_x > 5:  # valid position (not off-screen 0,0)
-                    is_me = ta_x > threshold
+                # Determine is_me from the full bubble alignment, not only the left edge.
+                inferred_side = self._infer_is_me_from_frame(ta_elem, cell_x, cell_w)
+                if inferred_side is not None:
+                    is_me = inferred_side
                 else:
                     # Fallback: only trust strong received-side markers.
                     # If the row is partially visible, preserve the previous side context
