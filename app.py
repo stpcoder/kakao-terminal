@@ -622,12 +622,14 @@ class KakaoTerminal(App):
                 self.msg_offset = 0
                 self.messages = []
                 self.current_room = None
+                log.clear()
                 if closed:
-                    log.write("[dim]⏺[/] Closed chat and returned to room list")
+                    log.write("[dim]⏺[/] Closed chat window")
                 else:
-                    log.write("[dim]⏺[/] Back to room list")
+                    log.write("[dim]⏺[/] Returned to room list mode")
                     log.write("[dim]  Chat window may still be open[/]")
-                log.write("[dim]  /l to refresh | ↓ more rooms[/]")
+                log.write("")
+                await self.handle_command("/l")
             else:
                 log.write("[dim]Already at room list[/]")
 
