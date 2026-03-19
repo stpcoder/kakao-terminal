@@ -41,6 +41,7 @@ class KakaoBridge:
 
     def __init__(self):
         self.current_room: Optional[str] = None
+        self.current_window_title: Optional[str] = None
         self.app_name = "KakaoTalk"
         self._last_error: Optional[str] = None  # Last AppleScript error
         self._pid: Optional[int] = None  # KakaoTalk process ID
@@ -155,14 +156,8 @@ class KakaoBridge:
         if not self.current_room:
             return "No room is open. Use /o <n> to open a room first."
 
-        search_name = self._strip_emoji(self.current_room)
-        app = self._get_ax_app()
-        windows = self._ax_val(app, 'AXWindows')
-        if windows:
-            for win in windows:
-                title = self._ax_val(win, 'AXTitle')
-                if title and search_name and search_name in title:
-                    return "Chat window is open but no messages loaded. Try /r to refresh."
+        if self._current_chat_window_exists():
+            return "Chat window is open but no messages loaded. Try /r to refresh."
 
         return "Chat window not found. The room may have closed. Use /o to reopen."
 
@@ -171,21 +166,15 @@ class KakaoBridge:
         if not self.current_room:
             return "No room is open. Use /o <n> to open a room first."
 
-        search_name = self._strip_emoji(self.current_room)
-        app = self._get_ax_app()
-        windows = self._ax_val(app, 'AXWindows')
-        if windows:
-            for win in windows:
-                title = self._ax_val(win, 'AXTitle')
-                if title and search_name and search_name in title:
-                    return "Chat window exists but input failed. KakaoTalk may be unresponsive. Try clicking the KakaoTalk window once."
+        if self._current_chat_window_exists():
+            return "Chat window exists but input failed. KakaoTalk may be unresponsive. Try clicking the KakaoTalk window once."
 
         return "Chat window not found. Use /o to reopen the room, then send again."
 
-    def _find_ax_scroll_and_table(self, window_name: str) -> Tuple[Any, Any]:
+    def _find_ax_scroll_and_table(self, window_name: str, exact_title: bool = False) -> Tuple[Any, Any]:
         """Find scroll area and table in a window by name.
         For main window: matches any known main window title
-        For chat windows: contains 'window_name'
+        For chat windows: contains 'window_name' unless exact_title is set
         Returns (scroll_area, table) or (None, None)
         """
         app = self._get_ax_app()
@@ -197,7 +186,12 @@ class KakaoBridge:
             title = self._ax_val(win, 'AXTitle')
             if not title:
                 continue
-            match = self._is_main_window(title) if is_main else (window_name in title)
+            if is_main:
+                match = self._is_main_window(title)
+            elif exact_title:
+                match = title == window_name
+            else:
+                match = window_name in title
             if match:
                 children = self._ax_val(win, 'AXChildren')
                 if not children:
@@ -401,6 +395,55 @@ end tell
         query_lower = query.lower()
         return [r for r in all_rooms if query_lower in r.name.lower()]
 
+    def _list_chat_window_titles(self, search_name: str = "", exact_title: bool = False) -> List[str]:
+        """Return open chat window titles, optionally filtered by room name or exact title."""
+        app = self._get_ax_app()
+        windows = self._ax_val(app, 'AXWindows')
+        titles = []
+        if not windows:
+            return titles
+        for win in windows:
+            title = self._ax_val(win, 'AXTitle')
+            if not title or self._is_main_window(title):
+                continue
+            if search_name:
+                if exact_title and title != search_name:
+                    continue
+                if not exact_title and search_name not in title:
+                    continue
+            titles.append(title)
+        return titles
+
+    def _capture_window_title_after_open(self, room_name: str, before_titles: List[str]) -> Optional[str]:
+        """Capture the best exact chat window title after opening a room."""
+        search_name = self._strip_emoji(room_name)
+        after_titles = self._list_chat_window_titles(search_name)
+        if not after_titles:
+            return None
+
+        before_set = set(before_titles)
+        new_titles = [title for title in after_titles if title not in before_set]
+        if len(new_titles) == 1:
+            return new_titles[0]
+
+        exact_titles = [title for title in after_titles if title == room_name]
+        if len(exact_titles) == 1:
+            return exact_titles[0]
+
+        if len(after_titles) == 1:
+            return after_titles[0]
+
+        return None
+
+    def _current_chat_window_exists(self) -> bool:
+        """Check whether the currently selected chat window still exists."""
+        if self.current_window_title:
+            return self._chat_window_exists(exact_title=self.current_window_title)
+        search_name = self._strip_emoji(self.current_room) if self.current_room else ""
+        if not search_name:
+            return False
+        return self._chat_window_exists(search_name=search_name)
+
     def _as_main_window_check(self) -> str:
         """Generate AppleScript condition to match main window by any known name."""
         conditions = [f'name of w is "{n}"' for n in self.MAIN_WINDOW_NAMES]
@@ -480,6 +523,7 @@ end tell
 
     def open_room_by_index(self, row_index: int, room_name: str = "", allow_raise_fallback: bool = True) -> bool:
         """Open chat room by row index. Prefer direct press, then optionally fall back."""
+        before_titles = self._list_chat_window_titles()
         opened = self._open_room_by_index_press(row_index)
         if opened:
             time.sleep(0.3)
@@ -487,9 +531,11 @@ end tell
                 search_name = self._strip_emoji(room_name)
                 if search_name and self._chat_window_exists(search_name):
                     self.current_room = room_name
+                    self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
                     return True
             else:
                 self.current_room = room_name
+                self.current_window_title = None
                 return True
 
         if not allow_raise_fallback:
@@ -505,6 +551,7 @@ end tell
                 return False
 
         self.current_room = room_name
+        self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
         return True
 
     def _open_room_by_name_press(self, room_name: str) -> bool:
@@ -602,11 +649,13 @@ end tell
         if not search_name:
             return False
 
+        before_titles = self._list_chat_window_titles()
         opened = self._open_room_by_name_press(room_name)
         if opened:
             time.sleep(0.3)
             if self._chat_window_exists(search_name):
                 self.current_room = room_name
+                self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
                 return True
 
         if not allow_raise_fallback:
@@ -620,6 +669,7 @@ end tell
             return False
 
         self.current_room = room_name
+        self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
         return True
 
     def send_message(self, message: str) -> bool:
@@ -636,7 +686,10 @@ end tell
         safe_msg = message.replace('\\', '\\\\').replace('"', '\\"')
 
         # Target specific room window
-        if self.current_room:
+        if self.current_window_title:
+            safe_title = self.current_window_title.replace('\\', '\\\\').replace('"', '\\"')
+            win_check = f'name of w is "{safe_title}"'
+        elif self.current_room:
             search_name = self._strip_emoji(self.current_room)
             win_check = f'name of w contains "{search_name}"'
         else:
@@ -675,7 +728,7 @@ end tell
         self._send_key(36)  # Return key to send
         return True
 
-    def _chat_window_exists(self, search_name: str) -> bool:
+    def _chat_window_exists(self, search_name: str = "", exact_title: Optional[str] = None) -> bool:
         """Check whether a chat window matching the room name is still open."""
         app = self._get_ax_app()
         windows = self._ax_val(app, 'AXWindows')
@@ -683,7 +736,11 @@ end tell
             return False
         for win in windows:
             title = self._ax_val(win, 'AXTitle')
-            if title and search_name in title and not self._is_main_window(title):
+            if not title or self._is_main_window(title):
+                continue
+            if exact_title is not None and title == exact_title:
+                return True
+            if search_name and search_name in title:
                 return True
         return False
 
@@ -693,14 +750,16 @@ end tell
             return False
 
         search_name = self._strip_emoji(self.current_room)
-        if not search_name:
+        exact_title = self.current_window_title
+        if not search_name and not exact_title:
             return False
 
+        title_check = f'name of w is "{exact_title.replace("\\", "\\\\").replace("\"", "\\\"")}"' if exact_title else f'name of w contains "{search_name}"'
         script = f'''
 tell application "System Events"
     tell process "KakaoTalk"
         repeat with w in windows
-            if name of w contains "{search_name}" then
+            if {title_check} then
                 try
                     perform action "AXRaise" of w
                 end try
@@ -720,14 +779,16 @@ end tell
         if "closed" in result:
             time.sleep(0.15)
             self.current_room = None
+            self.current_window_title = None
             return True
 
         if "escape" in result:
             time.sleep(0.1)
             self._send_key(53)  # Escape
             time.sleep(0.2)
-            if not self._chat_window_exists(search_name):
+            if not self._chat_window_exists(search_name=search_name, exact_title=exact_title):
                 self.current_room = None
+                self.current_window_title = None
                 return True
 
         return False
@@ -865,7 +926,9 @@ end tell
     def scroll_to_bottom(self) -> None:
         """Scroll the current chat room's message view to the bottom."""
         search_name = self._strip_emoji(self.current_room) if self.current_room else ""
-        if search_name:
+        if self.current_window_title:
+            scroll_area, table = self._find_ax_scroll_and_table(self.current_window_title, exact_title=True)
+        elif search_name:
             scroll_area, table = self._find_ax_scroll_and_table(search_name)
         else:
             scroll_area, table = None, None
@@ -894,7 +957,9 @@ end tell
 
         for attempt in range(retry + 1):
             # Find the chat window
-            if search_name:
+            if self.current_window_title:
+                scroll_area, table = self._find_ax_scroll_and_table(self.current_window_title, exact_title=True)
+            elif search_name:
                 scroll_area, table = self._find_ax_scroll_and_table(search_name)
             else:
                 # Find any non-main chat window

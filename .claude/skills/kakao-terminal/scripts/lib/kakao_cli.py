@@ -30,6 +30,7 @@ JSON_MODE = False
 def _default_state() -> dict:
     return {
         "current_room": None,
+        "current_window_title": None,
         "session_sends": 0,
         "last_room_index": None,
         "room_offset": 0,
@@ -163,6 +164,7 @@ def clone_session_view(session: dict) -> dict:
     return {
         "session_id": session["session_id"],
         "room_name": session["room_name"],
+        "window_title": session.get("window_title"),
         "room_row_index": session.get("room_row_index"),
         "room_index": session.get("room_index"),
         "msg_offset": session.get("msg_offset", 0),
@@ -196,9 +198,13 @@ def resolve_room_target(bridge: KakaoBridge, target: str) -> Tuple[Optional[Chat
         return None, [], "search"
 
     exact_matches = [room for room in rooms if room.name == target]
-    if exact_matches:
+    if len(exact_matches) == 1:
         return exact_matches[0], rooms, "exact"
-    return rooms[0], rooms, "search"
+    if len(exact_matches) > 1:
+        return None, exact_matches, "exact-ambiguous"
+    if len(rooms) == 1:
+        return rooms[0], rooms, "search"
+    return None, rooms, "search-ambiguous"
 
 
 def get_session_or_error(state: dict, session_id: str, command: str) -> Tuple[Optional[dict], Optional[dict]]:
@@ -207,6 +213,11 @@ def get_session_or_error(state: dict, session_id: str, command: str) -> Tuple[Op
     if session:
         return session, None
     return None, emit_error(command, f"Unknown session: {session_id}", {"session_id": session_id})
+
+
+def apply_room_context(bridge, room_name: Optional[str], window_title: Optional[str] = None) -> None:
+    bridge.current_room = room_name
+    bridge.current_window_title = window_title
 
 
 def render_setup(payload: dict) -> None:
@@ -404,6 +415,9 @@ def render_session_reply(payload: dict) -> None:
     if payload["status"] == "stale_context":
         print("✗ Session context is stale. Refresh the conversation before sending.")
         return
+    if payload["status"] == "sent_unverified":
+        print(f"✓ Reply sent in {payload['session']['room_name']}, but echo verification timed out: {payload['preview']}")
+        return
     print(f"✓ Sent reply in {payload['session']['room_name']}: {payload['preview']}")
 
 
@@ -510,13 +524,15 @@ def cmd_open(target: str) -> dict:
             "matches": [serialize_room(candidate, index=idx + 1) for idx, candidate in enumerate(candidates)],
             "mode": mode,
         }
-        return emit_error("open", f"Room not found: {target}", details)
+        message = f"Room target is ambiguous: {target}" if "ambiguous" in mode else f"Room not found: {target}"
+        return emit_error("open", message, details)
 
     result = bridge.open_room_by_index(room.row_index, room.name)
     if not result:
         return emit_error("open", "Failed to open room", {"target": target, "diagnosis": bridge.diagnose_no_rooms()})
 
     state["current_room"] = room.name
+    state["current_window_title"] = bridge.current_window_title
     state["last_room_index"] = room.row_index
     state["msg_offset"] = 0
     state["in_chat"] = True
@@ -528,6 +544,7 @@ def cmd_open(target: str) -> dict:
         "target": target,
         "resolution_mode": mode,
         "room": serialize_room(room),
+        "window_title": bridge.current_window_title,
     }
 
 
@@ -541,7 +558,7 @@ def cmd_read(limit: int = 20, offset: int = -1) -> dict:
         offset = state.get("msg_offset", 0)
 
     bridge = create_bridge()
-    bridge.current_room = state["current_room"]
+    apply_room_context(bridge, state["current_room"], state.get("current_window_title"))
     messages = bridge.get_chat_messages(limit=limit, msg_offset=offset)
     if not messages:
         return emit_error("read", bridge.diagnose_no_messages(), {"room_name": state["current_room"], "msg_offset": offset})
@@ -579,7 +596,7 @@ def cmd_send(message: str) -> dict:
         warning = "Over 50 messages sent this session. Risk of account restriction."
 
     bridge = create_bridge()
-    bridge.current_room = state["current_room"]
+    apply_room_context(bridge, state["current_room"], state.get("current_window_title"))
     result = bridge.send_message(message)
     save_state(state)
 
@@ -681,10 +698,11 @@ def cmd_back() -> dict:
     closed = False
     if state.get("current_room"):
         bridge = create_bridge()
-        bridge.current_room = state["current_room"]
+        apply_room_context(bridge, state["current_room"], state.get("current_window_title"))
         closed = bridge.close_current_chat()
 
     state["current_room"] = None
+    state["current_window_title"] = None
     state["in_chat"] = False
     state["msg_offset"] = 0
     save_state(state)
@@ -737,7 +755,13 @@ def cmd_room_resolve(query: str) -> dict:
     bridge = create_bridge()
     room, candidates, mode = resolve_room_target(bridge, query)
     if not room:
-        return emit_error("room-resolve", f"Could not resolve room: {query}", {"query": query})
+        details = {
+            "query": query,
+            "resolution_mode": mode,
+            "matches": [serialize_room(candidate, index=idx + 1) for idx, candidate in enumerate(candidates[:10])],
+        }
+        message = f"Could not resolve room uniquely: {query}" if "ambiguous" in mode else f"Could not resolve room: {query}"
+        return emit_error("room-resolve", message, details)
     return {
         "ok": True,
         "command": "room-resolve",
@@ -754,12 +778,18 @@ def cmd_session_open(target: str, limit: int = 20) -> dict:
     bridge = create_bridge()
     room, candidates, mode = resolve_room_target(bridge, target)
     if not room:
-        return emit_error("session-open", f"Room not found: {target}", {"target": target})
+        details = {
+            "target": target,
+            "resolution_mode": mode,
+            "matches": [serialize_room(candidate, index=idx + 1) for idx, candidate in enumerate(candidates[:10])],
+        }
+        message = f"Room target is ambiguous: {target}" if "ambiguous" in mode else f"Room not found: {target}"
+        return emit_error("session-open", message, details)
 
     if not bridge.open_room_by_index(room.row_index, room.name):
         return emit_error("session-open", "Failed to open room", {"target": target, "diagnosis": bridge.diagnose_no_rooms()})
 
-    bridge.current_room = room.name
+    apply_room_context(bridge, room.name, bridge.current_window_title)
     messages = bridge.get_chat_messages(limit=limit, msg_offset=0)
     if not messages:
         return emit_error("session-open", bridge.diagnose_no_messages(), {"target": target, "room_name": room.name})
@@ -769,6 +799,7 @@ def cmd_session_open(target: str, limit: int = 20) -> dict:
     session = {
         "session_id": session_id,
         "room_name": room.name,
+        "window_title": bridge.current_window_title,
         "room_row_index": room.row_index,
         "room_index": next((idx + 1 for idx, candidate in enumerate(candidates) if candidate.name == room.name), None),
         "msg_offset": 0,
@@ -780,6 +811,7 @@ def cmd_session_open(target: str, limit: int = 20) -> dict:
     }
     state["agent_sessions"][session_id] = session
     state["current_room"] = room.name
+    state["current_window_title"] = bridge.current_window_title
     state["msg_offset"] = 0
     state["in_chat"] = True
     save_state(state)
@@ -791,6 +823,7 @@ def cmd_session_open(target: str, limit: int = 20) -> dict:
         "resolution_mode": mode,
         "room": serialize_room(room),
         "session": clone_session_view(session),
+        "window_title": bridge.current_window_title,
         "messages": [serialize_message(message) for message in messages],
         "cursor": {
             "msg_offset": 0,
@@ -817,7 +850,7 @@ def cmd_session_fetch(session_id: str, mode: str = "latest", limit: int = 20, st
         msg_offset = max(0, msg_offset - step)
 
     bridge = create_bridge()
-    bridge.current_room = session["room_name"]
+    apply_room_context(bridge, session["room_name"], session.get("window_title"))
     retry = 2 if mode in {"latest", "refresh"} else 1
     messages = bridge.get_chat_messages(limit=limit, retry=retry, msg_offset=msg_offset)
     if not messages:
@@ -831,6 +864,7 @@ def cmd_session_fetch(session_id: str, mode: str = "latest", limit: int = 20, st
         session["last_seen_at"] = now_iso()
     state["agent_sessions"][session_id] = session
     state["current_room"] = session["room_name"]
+    state["current_window_title"] = session.get("window_title")
     state["msg_offset"] = msg_offset
     state["in_chat"] = True
     save_state(state)
@@ -856,7 +890,7 @@ def cmd_session_watch(session_id: str, timeout_seconds: int = 60, interval_secon
         return error
 
     bridge = create_bridge()
-    bridge.current_room = session["room_name"]
+    apply_room_context(bridge, session["room_name"], session.get("window_title"))
     baseline = session.get("last_seen_signature") or []
     baseline_set = set(baseline)
     started = time.time()
@@ -877,6 +911,7 @@ def cmd_session_watch(session_id: str, timeout_seconds: int = 60, interval_secon
                 session["at_latest"] = True
                 state["agent_sessions"][session_id] = session
                 state["current_room"] = session["room_name"]
+                state["current_window_title"] = session.get("window_title")
                 state["msg_offset"] = 0
                 state["in_chat"] = True
                 save_state(state)
@@ -909,7 +944,7 @@ def cmd_session_reply(session_id: str, message: str) -> dict:
         return emit_error("session-reply", "Message is empty", {"session_id": session_id})
 
     bridge = create_bridge()
-    bridge.current_room = session["room_name"]
+    apply_room_context(bridge, session["room_name"], session.get("window_title"))
     latest_messages = bridge.get_chat_messages(limit=max(10, int(session.get("last_fetch_limit", 20))), msg_offset=0)
     if not latest_messages:
         return emit_error("session-reply", bridge.diagnose_no_messages(), {"session_id": session_id})
@@ -939,13 +974,27 @@ def cmd_session_reply(session_id: str, message: str) -> dict:
         save_state(state)
         return emit_error("session-reply", bridge.diagnose_send_failure(), {"session_id": session_id, "room_name": session["room_name"]})
 
-    verification = bridge.get_latest_messages_fast(count=5)
-    session["last_seen_signature"] = messages_signature(verification or latest_messages)
+    verification = []
+    verified = False
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        verification = bridge.get_latest_messages_fast(count=8)
+        if verification:
+            signature = messages_signature(verification)
+            sent_seen = any(msg.is_me and msg.text == message for msg in verification[-5:])
+            if sent_seen or signature != previous_signature:
+                verified = sent_seen
+                break
+        time.sleep(0.25)
+
+    final_messages = verification or latest_messages
+    session["last_seen_signature"] = messages_signature(final_messages)
     session["last_seen_at"] = now_iso()
     session["msg_offset"] = 0
     session["at_latest"] = True
     state["agent_sessions"][session_id] = session
     state["current_room"] = session["room_name"]
+    state["current_window_title"] = session.get("window_title")
     state["msg_offset"] = 0
     state["in_chat"] = True
     save_state(state)
@@ -954,10 +1003,11 @@ def cmd_session_reply(session_id: str, message: str) -> dict:
     return {
         "ok": True,
         "command": "session-reply",
-        "status": "sent",
+        "status": "sent" if verified else "sent_unverified",
         "session": clone_session_view(session),
         "preview": preview,
-        "verified_messages": [serialize_message(msg) for msg in verification],
+        "verified": verified,
+        "verified_messages": [serialize_message(msg) for msg in final_messages],
     }
 
 
@@ -968,12 +1018,13 @@ def cmd_session_close(session_id: str) -> dict:
         return error
 
     bridge = create_bridge()
-    bridge.current_room = session["room_name"]
+    apply_room_context(bridge, session["room_name"], session.get("window_title"))
     chat_closed = bridge.close_current_chat()
 
     del state["agent_sessions"][session_id]
     if state.get("current_room") == session["room_name"]:
         state["current_room"] = None
+        state["current_window_title"] = None
         state["msg_offset"] = 0
         state["in_chat"] = False
     save_state(state)
