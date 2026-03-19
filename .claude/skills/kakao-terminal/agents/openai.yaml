@@ -1,7 +1,7 @@
 interface:
   display_name: "Kakao Terminal"
-  short_description: "Operate KakaoTalk on macOS from one skill."
-  default_prompt: "Use $kakao-terminal to browse KakaoTalk rooms, read recent messages, or verify macOS setup."
+  short_description: "Scan KakaoTalk inboxes, open conversation sessions, and send safe replies from one skill."
+  default_prompt: "Use $kakao-terminal to run doctor, scan the inbox, resolve a room, open a conversation session, fetch structured messages, send a safe reply, or start an event-watch or daemon-run stream."
 
 policy:
   allow_implicit_invocation: true

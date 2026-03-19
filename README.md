@@ -41,7 +41,7 @@ After installation:
 ```bash
 bash .claude/skills/kakao-terminal/scripts/install.sh
 python3 .claude/skills/kakao-terminal/scripts/run.py doctor
-python3 .claude/skills/kakao-terminal/scripts/run.py list
+python3 .claude/skills/kakao-terminal/scripts/run.py --json inbox-scan
 ```
 
 Public skill entrypoint:
@@ -143,6 +143,15 @@ These commands are meant to be used with `--json` so an agent can parse room met
 
 `event-watch` and `daemon-run` are long-running event streams. They emit newline-delimited JSON events so an agent can react to inbox changes, message deltas, heartbeats, and connectivity state changes without repeatedly invoking one-shot commands itself.
 
+Recommended quick path:
+
+```bash
+python kakao_cli.py --json inbox-scan
+python kakao_cli.py --json session-open "Customer Name"
+python kakao_cli.py --json session-fetch conv_0001 latest 20
+python kakao_cli.py --json session-reply conv_0001 "Hello"
+```
+
 ## Keep the bundle in sync
 
 If you change the root CLI sources, refresh the bundled skill runtime before publishing:
@@ -157,7 +166,7 @@ Recommended verification flow:
 python3 scripts/sync_skill_bundle.py
 bash .claude/skills/kakao-terminal/scripts/install.sh
 python3 .claude/skills/kakao-terminal/scripts/run.py doctor
-python3 .claude/skills/kakao-terminal/scripts/run.py list
+python3 .claude/skills/kakao-terminal/scripts/run.py --json inbox-scan
 ```
 
 Then test a fresh install in another project:
