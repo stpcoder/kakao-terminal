@@ -37,8 +37,10 @@ Commands:
   session-open Open a conversation session and fetch a snapshot
   session-fetch Fetch latest, older, or newer messages for a session
   session-watch Poll for new reply deltas
+  event-watch  Stream long-running message delta events for one session
   session-reply Send a reply with session freshness checks
   session-close Close and release a session
+  daemon-run   Stream long-running inbox and session events
   help         Show this help
 
 Options:

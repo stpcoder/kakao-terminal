@@ -84,6 +84,13 @@ python kakao_cli.py --json session-reply conv_0001 "Hello"
 python kakao_cli.py --json session-close conv_0001
 ```
 
+Long-running automation:
+
+```bash
+python kakao_cli.py daemon-run 5 10 5 30
+python kakao_cli.py event-watch conv_0001 3 5 30
+```
+
 TUI:
 
 ```bash
@@ -127,10 +134,14 @@ For AI agents, the recommended surface is the JSON mode plus the session-oriente
 - `session-open`: open a room and return a structured transcript snapshot
 - `session-fetch`: page latest, older, or newer messages without manually juggling offsets
 - `session-watch`: poll for new inbound messages and return only deltas
+- `event-watch`: keep one session open and stream NDJSON delta events continuously
 - `session-reply`: verify the latest transcript and send a reply safely
 - `session-close`: release the room session and close the chat window when possible
+- `daemon-run`: keep a long-lived inbox/session daemon running and emit NDJSON events for inbox changes and active session updates
 
 These commands are meant to be used with `--json` so an agent can parse room metadata, messages, cursors, and session ids directly instead of scraping human-readable terminal output.
+
+`event-watch` and `daemon-run` are long-running event streams. They emit newline-delimited JSON events so an agent can react to inbox changes, message deltas, heartbeats, and connectivity state changes without repeatedly invoking one-shot commands itself.
 
 ## Keep the bundle in sync
 

@@ -1,9 +1,9 @@
 ---
 name: kakao-terminal
-description: Operate KakaoTalk on macOS from an AI agent or terminal without leaving your workflow. Use this for setup checks, inbox scanning, room resolution, opening conversation sessions, structured message reads, reply watching, and sending messages when the user explicitly asks.
+description: Operate KakaoTalk on macOS from an AI agent or terminal without leaving your workflow. Use this for setup checks, inbox scanning, room resolution, opening conversation sessions, structured message reads, reply watching, long-running daemon streams, and sending messages when the user explicitly asks.
 user-invocable: true
 allowed-tools: Bash
-argument-hint: [--json] <doctor|setup|list|open|read|send|status|search|up|down|refresh|rooms-next|rooms-prev|back|windows|inbox-scan|room-resolve|session-open|session-fetch|session-watch|session-reply|session-close> [args]
+argument-hint: [--json] <doctor|setup|list|open|read|send|status|search|up|down|refresh|rooms-next|rooms-prev|back|windows|inbox-scan|room-resolve|session-open|session-fetch|session-watch|event-watch|session-reply|session-close|daemon-run> [args]
 ---
 
 # kakao-terminal
@@ -32,7 +32,9 @@ Examples:
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-open "Room Name"`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-fetch conv_0001 latest 20`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-watch conv_0001 60 3 5`
+- `python3 .claude/skills/kakao-terminal/scripts/run.py event-watch conv_0001 3 5 30`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-reply conv_0001 "hello"`
+- `python3 .claude/skills/kakao-terminal/scripts/run.py daemon-run 5 10 5 30`
 
 ## Agent harness workflow
 
@@ -43,12 +45,14 @@ For agentic use, prefer the structured session commands over the low-level human
 3. Resolve or open a target room with `room-resolve` or `session-open`
 4. Read and paginate with `session-fetch`
 5. Wait for deltas with `session-watch`
-6. Only when the user explicitly asks, send through `session-reply`
-7. Release the room with `session-close`
+6. For long-lived automation, use `event-watch` or `daemon-run`
+7. Only when the user explicitly asks, send through `session-reply`
+8. Release the room with `session-close`
 
 ## Safety
 
 - Only use `send` or `session-reply` when the user explicitly asks to send a message.
+- `event-watch` and `daemon-run` are streaming commands. Stop them explicitly when the monitoring task is complete.
 - If setup fails, read `references/prereqs.md` and report the missing prerequisite instead of retrying blindly.
 - This skill only works on macOS with KakaoTalk running and accessibility permission granted to the terminal app.
 - Use this skill at your own risk. The author is not responsible for account restrictions, policy violations, delivery failures, data loss, or other damage caused by its use.

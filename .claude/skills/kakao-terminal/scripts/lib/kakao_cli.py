@@ -160,6 +160,23 @@ def messages_signature(messages: List[Any], tail: int = 5) -> List[str]:
     return keys
 
 
+def rooms_signature(rooms: List[dict]) -> List[str]:
+    keys = []
+    for room in rooms:
+        keys.append(
+            json.dumps(
+                {
+                    "name": room["name"],
+                    "unread": room["unread"],
+                    "row_index": room["row_index"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    return keys
+
+
 def clone_session_view(session: dict) -> dict:
     return {
         "session_id": session["session_id"],
@@ -218,6 +235,15 @@ def get_session_or_error(state: dict, session_id: str, command: str) -> Tuple[Op
 def apply_room_context(bridge, room_name: Optional[str], window_title: Optional[str] = None) -> None:
     bridge.current_room = room_name
     bridge.current_window_title = window_title
+
+
+def emit_stream_event(event_type: str, **data: Any) -> None:
+    payload = {
+        "event": event_type,
+        "timestamp": now_iso(),
+        **data,
+    }
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def render_setup(payload: dict) -> None:
@@ -1037,6 +1063,163 @@ def cmd_session_close(session_id: str) -> dict:
     }
 
 
+def cmd_event_watch(session_id: str, interval_seconds: int = 3, count: int = 5, heartbeat_seconds: int = 30) -> int:
+    """Stream event-like message deltas for a single session forever."""
+    state = load_state()
+    session, error = get_session_or_error(state, session_id, "event-watch")
+    if error:
+        emit_stream_event("watch_error", session_id=session_id, error=error["error"])
+        return 1
+
+    emit_stream_event(
+        "watch_started",
+        session_id=session_id,
+        room_name=session["room_name"],
+        interval_seconds=interval_seconds,
+        count=count,
+    )
+
+    last_heartbeat = time.time()
+    while True:
+        state = load_state()
+        session, error = get_session_or_error(state, session_id, "event-watch")
+        if error:
+            emit_stream_event("watch_stopped", session_id=session_id, reason="session_missing")
+            return 0
+
+        bridge = create_bridge()
+        apply_room_context(bridge, session["room_name"], session.get("window_title"))
+        messages = bridge.get_latest_messages_fast(count=count)
+        if messages:
+            signature = messages_signature(messages, tail=count)
+            baseline = session.get("last_seen_signature") or []
+            baseline_set = set(baseline)
+            if signature != baseline:
+                new_messages = []
+                for message, key in zip(messages[-len(signature):], signature):
+                    if key not in baseline_set:
+                        new_messages.append(message)
+
+                session["last_seen_signature"] = signature
+                session["last_seen_at"] = now_iso()
+                session["msg_offset"] = 0
+                session["at_latest"] = True
+                state["agent_sessions"][session_id] = session
+                state["current_room"] = session["room_name"]
+                state["current_window_title"] = session.get("window_title")
+                state["msg_offset"] = 0
+                state["in_chat"] = True
+                save_state(state)
+
+                emit_stream_event(
+                    "message_delta",
+                    session_id=session_id,
+                    room_name=session["room_name"],
+                    new_messages=[serialize_message(msg) for msg in new_messages] if new_messages else [serialize_message(msg) for msg in messages],
+                )
+
+        now = time.time()
+        if now - last_heartbeat >= heartbeat_seconds:
+            emit_stream_event(
+                "heartbeat",
+                session_id=session_id,
+                room_name=session["room_name"],
+                at_latest=session.get("at_latest", True),
+            )
+            last_heartbeat = now
+
+        time.sleep(interval_seconds)
+
+
+def cmd_daemon_run(interval_seconds: int = 5, room_limit: int = 10, watch_count: int = 5, heartbeat_seconds: int = 30) -> int:
+    """Run a long-lived inbox/session daemon and emit NDJSON events."""
+    emit_stream_event(
+        "daemon_started",
+        interval_seconds=interval_seconds,
+        room_limit=room_limit,
+        watch_count=watch_count,
+    )
+
+    last_room_signature: List[str] = []
+    last_connection_state: Optional[bool] = None
+    last_heartbeat = time.time()
+
+    while True:
+        state = load_state()
+        try:
+            bridge = create_bridge()
+        except RuntimeError as exc:
+            emit_stream_event("daemon_error", error=str(exc))
+            return 1
+
+        setup_payload = cmd_setup()
+        connected = bool(setup_payload.get("ok"))
+        if connected != last_connection_state:
+            emit_stream_event(
+                "connection_state",
+                connected=connected,
+                checks=setup_payload.get("checks"),
+                error=setup_payload.get("error"),
+            )
+            last_connection_state = connected
+
+        if connected:
+            inbox = cmd_inbox_scan(limit=room_limit, offset=0)
+            if inbox["ok"]:
+                room_signature = rooms_signature(inbox["rooms"])
+                if room_signature != last_room_signature:
+                    emit_stream_event(
+                        "inbox_changed",
+                        rooms=inbox["rooms"],
+                        recommended=inbox["recommended"],
+                    )
+                    last_room_signature = room_signature
+
+            for session_id, session in state.get("agent_sessions", {}).items():
+                bridge = create_bridge()
+                apply_room_context(bridge, session["room_name"], session.get("window_title"))
+                messages = bridge.get_latest_messages_fast(count=watch_count)
+                if not messages:
+                    continue
+                signature = messages_signature(messages, tail=watch_count)
+                baseline = session.get("last_seen_signature") or []
+                if signature != baseline:
+                    baseline_set = set(baseline)
+                    new_messages = []
+                    for message, key in zip(messages[-len(signature):], signature):
+                        if key not in baseline_set:
+                            new_messages.append(message)
+
+                    session["last_seen_signature"] = signature
+                    session["last_seen_at"] = now_iso()
+                    session["msg_offset"] = 0
+                    session["at_latest"] = True
+                    state["agent_sessions"][session_id] = session
+                    state["current_room"] = session["room_name"]
+                    state["current_window_title"] = session.get("window_title")
+                    state["msg_offset"] = 0
+                    state["in_chat"] = True
+                    save_state(state)
+
+                    emit_stream_event(
+                        "session_message_delta",
+                        session_id=session_id,
+                        room_name=session["room_name"],
+                        new_messages=[serialize_message(msg) for msg in new_messages] if new_messages else [serialize_message(msg) for msg in messages],
+                    )
+
+        now = time.time()
+        if now - last_heartbeat >= heartbeat_seconds:
+            emit_stream_event(
+                "daemon_heartbeat",
+                connected=connected,
+                session_count=len(state.get("agent_sessions", {})),
+            )
+            last_heartbeat = now
+
+        time.sleep(interval_seconds)
+
+
 def cmd_help() -> None:
     print(
         """kakao-terminal CLI - human and agent harness surface
@@ -1063,8 +1246,10 @@ Agent harness:
   session-open    Open a room and create an agent session
   session-fetch   Fetch latest/older/newer messages for a session
   session-watch   Poll for new messages until timeout
+  event-watch     Stream message delta events for one session
   session-reply   Send a message safely for a session
   session-close   Close and remove an agent session
+  daemon-run      Run a long-lived inbox/session event daemon
 
 Global options:
   --json          Print structured JSON output
@@ -1075,8 +1260,10 @@ Examples:
   python kakao_cli.py --json session-open "고객A"
   python kakao_cli.py --json session-fetch conv_0001 older 20 10
   python kakao_cli.py --json session-watch conv_0001 60 3 5
+  python kakao_cli.py event-watch conv_0001 3 5 30
   python kakao_cli.py --json session-reply conv_0001 "Hello"
   python kakao_cli.py --json session-close conv_0001
+  python kakao_cli.py daemon-run 5 10 5 30
 """
     )
 
@@ -1179,6 +1366,19 @@ def main() -> None:
             print_payload(cmd_session_watch(session_id, timeout_seconds, interval_seconds, count), render_session_watch)
         else:
             print_payload(emit_error("session-watch", "Usage: session-watch <session_id> [timeout] [interval] [count]"), render_session_watch)
+    elif cmd == "event-watch":
+        if rest:
+            session_id = rest[0]
+            interval_seconds = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 3
+            count = int(rest[2]) if len(rest) > 2 and rest[2].isdigit() else 5
+            heartbeat_seconds = int(rest[3]) if len(rest) > 3 and rest[3].isdigit() else 30
+            raise SystemExit(cmd_event_watch(session_id, interval_seconds, count, heartbeat_seconds))
+        else:
+            error = emit_error("event-watch", "Usage: event-watch <session_id> [interval] [count] [heartbeat]")
+            if JSON_MODE:
+                print(json.dumps(error, ensure_ascii=False, indent=2))
+            else:
+                print(f"✗ {error['error']['message']}")
     elif cmd == "session-reply":
         if len(rest) >= 2:
             session_id = rest[0]
@@ -1190,6 +1390,12 @@ def main() -> None:
             print_payload(cmd_session_close(rest[0]), render_session_close)
         else:
             print_payload(emit_error("session-close", "Usage: session-close <session_id>"), render_session_close)
+    elif cmd == "daemon-run":
+        interval_seconds = int(rest[0]) if rest and rest[0].isdigit() else 5
+        room_limit = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 10
+        watch_count = int(rest[2]) if len(rest) > 2 and rest[2].isdigit() else 5
+        heartbeat_seconds = int(rest[3]) if len(rest) > 3 and rest[3].isdigit() else 30
+        raise SystemExit(cmd_daemon_run(interval_seconds, room_limit, watch_count, heartbeat_seconds))
     elif cmd in ("help", "-h", "--help"):
         cmd_help()
     else:
