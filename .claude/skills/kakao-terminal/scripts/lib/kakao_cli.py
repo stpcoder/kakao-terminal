@@ -476,16 +476,24 @@ def cmd_setup() -> dict:
         }
 
     bridge = create_bridge()
-    try:
-        app = bridge._get_ax_app()
-        windows = bridge._ax_val(app, "AXWindows")
-        checks["accessibility"] = True
-    except Exception:
+    checks["accessibility"] = bridge.check_accessibility_permission()
+    if not checks["accessibility"]:
         return {
             "ok": False,
             "command": "setup",
             "checks": checks,
             "error": {"message": "Accessibility permission denied"},
+        }
+
+    try:
+        app = bridge._get_ax_app()
+        windows = bridge._ax_val(app, "AXWindows")
+    except Exception:
+        return {
+            "ok": False,
+            "command": "setup",
+            "checks": checks,
+            "error": {"message": "Cannot access KakaoTalk accessibility tree"},
         }
 
     checks["window_open"] = bool(windows)

@@ -8,6 +8,7 @@ from typing import List, Optional, Any, Tuple
 from dataclasses import dataclass
 from Quartz import CGEventCreateKeyboardEvent, CGEventPostToPid
 from ApplicationServices import (
+    AXIsProcessTrusted,
     AXUIElementCreateApplication,
     AXUIElementCopyAttributeValue,
     AXUIElementSetAttributeValue,
@@ -251,19 +252,20 @@ class KakaoBridge:
 
     def check_accessibility_permission(self) -> bool:
         """접근성 권한 확인"""
-        script = '''
-        tell application "System Events"
-            try
-                tell process "KakaoTalk"
-                    get name
-                end tell
-                return "granted"
-            on error
-                return "denied"
-            end try
-        end tell
-        '''
-        return "granted" in self._run_applescript(script).lower()
+        try:
+            if not AXIsProcessTrusted():
+                return False
+        except Exception:
+            return False
+
+        # A trusted process should also be able to inspect the system-wide focused element.
+        # This avoids false positives where AppleScript access works partially but AX reads fail.
+        try:
+            app = self._get_ax_app()
+            err, _ = AXUIElementCopyAttributeValue(app, 'AXRole', None)
+            return err == 0
+        except Exception:
+            return False
 
     def activate_app(self) -> bool:
         """Activate KakaoTalk app (only needed for rare UI operations)"""
