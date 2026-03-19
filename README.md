@@ -2,7 +2,7 @@
 
 Operate KakaoTalk on macOS from the terminal, a TUI, or a single installable AI skill.
 
-`kakao-terminal` is built for people who already live in the terminal and want KakaoTalk access without breaking flow. It reads KakaoTalk through the macOS Accessibility API, keeps the main app in the background, and exposes the same core actions through both a local CLI and a public skill package.
+`kakao-terminal` is built for people who already live in the terminal and want KakaoTalk access without breaking flow. It reads KakaoTalk through the macOS Accessibility API, keeps the main app in the background, and exposes the same core actions through a local CLI, an interactive TUI, and a public skill package.
 
 간단히 말하면, 카카오톡을 터미널에서 다루고 싶은 사람을 위한 macOS 도구입니다. 방 목록 보기, 채팅 열기, 최근 메시지 읽기, 새로고침, 메시지 보내기 같은 흐름을 CLI와 AI skill 형태로 제공합니다.
 
@@ -25,6 +25,8 @@ Operate KakaoTalk on macOS from the terminal, a TUI, or a single installable AI 
 - Refresh to the latest messages
 - Inspect open KakaoTalk windows
 - Run a doctor check before normal use
+- Return structured JSON for agent harnesses
+- Open session-scoped conversations and watch for replies
 
 ## Install as a skill
 
@@ -70,6 +72,18 @@ python kakao_cli.py send "hello"
 python kakao_cli.py refresh
 ```
 
+Agent harness examples:
+
+```bash
+python kakao_cli.py --json inbox-scan
+python kakao_cli.py --json room-resolve "Customer Name"
+python kakao_cli.py --json session-open "Customer Name"
+python kakao_cli.py --json session-fetch conv_0001 latest 20
+python kakao_cli.py --json session-watch conv_0001 60 3 5
+python kakao_cli.py --json session-reply conv_0001 "Hello"
+python kakao_cli.py --json session-close conv_0001
+```
+
 TUI:
 
 ```bash
@@ -103,6 +117,20 @@ The public skill setup checklist lives in [`.claude/skills/kakao-terminal/refere
 ```
 
 `scripts/run.py` is the stable entrypoint for agents. `scripts/install.sh` provisions the bundled virtual environment. The bundled runtime is intentionally self-contained so the skill can be installed into other repositories.
+
+## Agent harness surface
+
+For AI agents, the recommended surface is the JSON mode plus the session-oriented commands.
+
+- `inbox-scan`: read the current room page and highlight unread candidates
+- `room-resolve`: resolve a user query into a concrete room
+- `session-open`: open a room and return a structured transcript snapshot
+- `session-fetch`: page latest, older, or newer messages without manually juggling offsets
+- `session-watch`: poll for new inbound messages and return only deltas
+- `session-reply`: verify the latest transcript and send a reply safely
+- `session-close`: release the room session and close the chat window when possible
+
+These commands are meant to be used with `--json` so an agent can parse room metadata, messages, cursors, and session ids directly instead of scraping human-readable terminal output.
 
 ## Keep the bundle in sync
 

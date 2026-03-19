@@ -32,7 +32,17 @@ Commands:
   rooms-prev   Show the previous page of rooms
   back         Return to the room list
   windows      Show open KakaoTalk windows
+  inbox-scan   Scan the current inbox page and rank unread rooms
+  room-resolve Resolve a room query into a concrete room
+  session-open Open a conversation session and fetch a snapshot
+  session-fetch Fetch latest, older, or newer messages for a session
+  session-watch Poll for new reply deltas
+  session-reply Send a reply with session freshness checks
+  session-close Close and release a session
   help         Show this help
+
+Options:
+  --json       Return structured JSON output for agent harnesses
 """
 
 
