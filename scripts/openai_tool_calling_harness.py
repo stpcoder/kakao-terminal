@@ -355,6 +355,37 @@ def tool_schema(allowed_names: Optional[List[str]] = None) -> List[Dict[str, Any
         {
             "type": "function",
             "function": {
+                "name": "kakao_sessions_list",
+                "description": "Inspect stored agent sessions and identify stale ones.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "stale_after_minutes": {"type": "integer", "minimum": 0, "maximum": 1440},
+                    },
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "kakao_sessions_cleanup",
+                "description": "Clean up stale stored sessions or force-close every stored session.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "stale_after_minutes": {"type": "integer", "minimum": 0, "maximum": 1440},
+                        "force": {"type": "boolean"},
+                    },
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "kakao_event_watch_sample",
                 "description": "Run event-watch briefly and return a small sample of NDJSON events.",
                 "parameters": {
@@ -438,6 +469,17 @@ def build_tool_executor(
         session_id = args["session_id"]
         return run_json_command(f"--json session-close {shlex.quote(session_id)}")
 
+    def sessions_list(args: Dict[str, Any]) -> Dict[str, Any]:
+        stale_after_minutes = int(args.get("stale_after_minutes", 30))
+        return run_json_command(f"--json sessions-list {stale_after_minutes}")
+
+    def sessions_cleanup(args: Dict[str, Any]) -> Dict[str, Any]:
+        force = bool(args.get("force", False))
+        if force:
+            return run_json_command("--json sessions-cleanup --force")
+        stale_after_minutes = int(args.get("stale_after_minutes", 30))
+        return run_json_command(f"--json sessions-cleanup {stale_after_minutes}")
+
     def event_watch_sample(args: Dict[str, Any]) -> Dict[str, Any]:
         session_id = args["session_id"]
         interval = int(args.get("interval", 3))
@@ -470,6 +512,8 @@ def build_tool_executor(
         "kakao_session_fetch": session_fetch,
         "kakao_session_reply": session_reply,
         "kakao_session_close": session_close,
+        "kakao_sessions_list": sessions_list,
+        "kakao_sessions_cleanup": sessions_cleanup,
         "kakao_event_watch_sample": event_watch_sample,
         "kakao_daemon_run_sample": daemon_run_sample,
     }
