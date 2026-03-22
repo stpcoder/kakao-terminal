@@ -24,6 +24,7 @@ class Scenario:
     max_turns: int = 8
     auto_close_sessions: bool = True
     tool_names: Optional[List[str]] = None
+    accepts_extra_input: bool = False
 
 
 SCENARIOS: Dict[str, Scenario] = {
@@ -90,6 +91,34 @@ SCENARIOS: Dict[str, Scenario] = {
         ),
         allow_send=False,
         max_turns=6,
+    ),
+    "resolve-room": Scenario(
+        name="resolve-room",
+        description="Interpret a user-style room request, resolve the intended room carefully, and open it without sending.",
+        user_prompt=(
+            "The user will provide a natural-language request for a specific KakaoTalk room. "
+            "First inspect visible room titles, then resolve the intended room semantically. "
+            "Only open the room if one candidate is clearly strongest. "
+            "If the intent is ambiguous, stop and explain the candidate rooms instead of guessing. "
+            "Do not send any messages. Close any opened session before finishing."
+        ),
+        allow_send=False,
+        max_turns=10,
+        accepts_extra_input=True,
+    ),
+    "recent-summary": Scenario(
+        name="recent-summary",
+        description="Open one room and summarize the recent conversation history for a user-specified time window.",
+        user_prompt=(
+            "The user will provide a room request and a recent time window such as the last 3 days. "
+            "Resolve the intended room carefully, open it, fetch recent messages, page older messages if needed, "
+            "and summarize only the conversation that appears to fall within the requested time window. "
+            "If the available transcript is not enough to confidently cover that window, say so explicitly. "
+            "Do not send any messages. Close any opened session before finishing."
+        ),
+        allow_send=False,
+        max_turns=12,
+        accepts_extra_input=True,
     ),
 }
 
@@ -493,6 +522,7 @@ def run_scenario(
     scenario: Scenario,
     approved_target: str = "",
     approved_message: str = "",
+    extra_input: str = "",
 ) -> Dict[str, Any]:
     tools = tool_schema(scenario.tool_names)
     executors = build_tool_executor(scenario.allow_send, scenario.tool_names)
@@ -532,6 +562,8 @@ def run_scenario(
             "target": approved_target,
             "message": approved_message,
         }
+    if extra_input:
+        task_payload["extra_input"] = extra_input
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {
@@ -625,6 +657,25 @@ def main(argv: List[str]) -> int:
             )
         )
         return 1
+    extra_input = ""
+    if scenario.accepts_extra_input:
+        extra_input = " ".join(argv[2:]).strip()
+        if not extra_input:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": f"{scenario_name} requires additional user-style input",
+                        "usage": {
+                            "resolve-room": "python3 scripts/openai_tool_calling_harness.py resolve-room \"여자친구 톡방 열어줘\"",
+                            "recent-summary": "python3 scripts/openai_tool_calling_harness.py recent-summary \"애깅❣️ 톡방 3일치 대화 내역 조회해서 알려줘\"",
+                        }.get(scenario_name, f"python3 scripts/openai_tool_calling_harness.py {scenario_name} \"<request>\""),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
     api_key = os.environ.get("LLM_API_KEY")
     if not api_key:
         print("LLM_API_KEY is required", file=sys.stderr)
@@ -635,7 +686,15 @@ def main(argv: List[str]) -> int:
         "runner": str(RUNNER),
         "model": model,
         "base_url": base_url,
-        "result": run_scenario(base_url, api_key, model, scenario, approved_target=approved_target, approved_message=approved_message),
+        "result": run_scenario(
+            base_url,
+            api_key,
+            model,
+            scenario,
+            approved_target=approved_target,
+            approved_message=approved_message,
+            extra_input=extra_input,
+        ),
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
