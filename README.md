@@ -27,6 +27,7 @@ Operate KakaoTalk on macOS from the terminal, a TUI, or a single installable AI 
 - Run a doctor check before normal use
 - Return structured JSON for agent harnesses
 - Open session-scoped conversations and watch for replies
+- Run approval-gated agent workflows from shell scripts
 
 ## Install as a skill
 
@@ -80,7 +81,6 @@ python kakao_cli.py --json room-resolve "Customer Name"
 python kakao_cli.py --json session-open "Customer Name"
 python kakao_cli.py --json session-fetch conv_0001 latest 20
 python kakao_cli.py --json session-watch conv_0001 60 3 5
-python kakao_cli.py --json session-reply conv_0001 "Hello"
 python kakao_cli.py --json session-close conv_0001
 ```
 
@@ -89,6 +89,22 @@ Long-running automation:
 ```bash
 python kakao_cli.py daemon-run 5 10 5 30
 python kakao_cli.py event-watch conv_0001 3 5 30
+```
+
+Approval-gated scenario wrappers:
+
+```bash
+mkdir -p logs
+
+./scripts/triage.sh | tee logs/triage.json
+./scripts/review.sh | tee logs/review.json
+./scripts/monitor.sh | tee logs/monitor.json
+
+# Draft only. This must not send.
+./scripts/safe_reply.sh | tee logs/safe_reply.json
+
+# Explicitly approved send path. Use only for a real approved message.
+./scripts/approve_send.sh "Room Name" "Approved message text" | tee logs/approve_send.json
 ```
 
 TUI:
@@ -143,14 +159,119 @@ These commands are meant to be used with `--json` so an agent can parse room met
 
 `event-watch` and `daemon-run` are long-running event streams. They emit newline-delimited JSON events so an agent can react to inbox changes, message deltas, heartbeats, and connectivity state changes without repeatedly invoking one-shot commands itself.
 
+## Recommended agent workflows
+
+There are two reply modes. Keep them distinct.
+
+### 1. Read-only or draft-only mode
+
+Use this for triage, review, or any workflow that must not send without approval.
+
+```bash
+python kakao_cli.py --json inbox-scan
+python kakao_cli.py --json session-open "Customer Name"
+python kakao_cli.py --json session-fetch conv_0001 latest 20
+python kakao_cli.py --json session-close conv_0001
+```
+
+Shell scenario:
+
+```bash
+./scripts/safe_reply.sh | tee logs/safe_reply.json
+```
+
+Expected behavior:
+
+- Reads one room
+- May produce a reply candidate
+- Must not call `session-reply`
+- Closes the session before finishing
+
+### 2. Approved send mode
+
+Use this only after a human has approved the exact room target and final reply text.
+
+```bash
+./scripts/approve_send.sh "Room Name" "Approved message text" | tee logs/approve_send.json
+```
+
+Expected behavior:
+
+- Re-checks setup
+- Re-opens the approved room
+- Re-reads recent context
+- Sends exactly the approved message
+- Closes the session before finishing
+
+This split exists to make the approval boundary explicit. `safe_reply.sh` is for drafting and review. `approve_send.sh` is the only shell scenario that should send.
+
 Recommended quick path:
 
 ```bash
 python kakao_cli.py --json inbox-scan
 python kakao_cli.py --json session-open "Customer Name"
 python kakao_cli.py --json session-fetch conv_0001 latest 20
-python kakao_cli.py --json session-reply conv_0001 "Hello"
+python kakao_cli.py --json session-close conv_0001
 ```
+
+Manual approved send path:
+
+```bash
+python kakao_cli.py --json room-resolve "Customer Name"
+python kakao_cli.py --json session-open "Customer Name"
+python kakao_cli.py --json session-fetch conv_0001 latest 20
+python kakao_cli.py --json session-reply conv_0001 "Approved message text"
+python kakao_cli.py --json session-close conv_0001
+```
+
+## Scenario scripts
+
+The repository includes shell entrypoints that run OpenAI-compatible tool-calling against the public skill runner.
+
+- `./scripts/triage.sh`
+  Check readiness, scan inbox, pick one room, open it, and summarize what needs attention.
+- `./scripts/review.sh`
+  Open one room and read the current conversation without replying.
+- `./scripts/monitor.sh`
+  Validate daemon/event monitoring and inspect NDJSON events.
+- `./scripts/safe_reply.sh`
+  Draft-only reply workflow. No sending allowed.
+- `./scripts/approve_send.sh "<room>" "<message>"`
+  Explicitly approved send workflow. This is the only wrapper that should send.
+- `./scripts/list_kakao_agent_scenarios.sh`
+  Print available scenario names and descriptions.
+- `./scripts/list_kakao_agent_tools.sh`
+  Print the structured tool list that the scenario harness exposes to the model.
+
+These wrappers are intended to run in a local macOS GUI terminal session that already has Accessibility permission. They are not meant for SSH-only execution.
+
+## Logs and verification
+
+The shell scenarios print a JSON report to stdout. Save the run with `tee` if you want to inspect it later.
+
+```bash
+./scripts/review.sh | tee logs/review.json
+```
+
+What to check in the saved report:
+
+- `transcript`
+  The exact tool calls the model made
+- `final_message`
+  The model's operational summary
+- `cleanup`
+  Automatic session closing performed by the harness
+
+Useful success checks:
+
+- `triage` / `review`
+  `kakao_session_open` should succeed and include `messages`
+- `monitor`
+  `kakao_daemon_run_sample` should emit `daemon_started`, `connection_state`, and inbox or session delta events
+- `safe_reply`
+  Must not contain `kakao_session_reply`
+- `approve_send`
+  Must contain `kakao_session_reply` and then `kakao_session_close`
 
 ## Keep the bundle in sync
 
@@ -181,10 +302,11 @@ Automated message sending may violate KakaoTalk policy or trigger account restri
 
 Current safeguards:
 
-- Rate limiting before send
-- Random jitter before send
-- Session send-count warning
-- Explicit doctor and setup flow
+- Explicit `doctor` and setup flow
+- Session-scoped JSON commands instead of raw UI scripting only
+- Draft-only flow separated from approved send flow
+- Approved send wrapper that re-opens and re-reads context before sending
+- Session cleanup after scenario completion
 
 ## Disclaimer
 
@@ -202,6 +324,8 @@ If you use message automation features, you are solely responsible for checking 
 kakao_bridge.py                 Core Accessibility bridge
 kakao_cli.py                    Local CLI entrypoint
 app.py                          Textual TUI
+scripts/openai_tool_calling_harness.py  OpenAI-compatible tool-calling harness
+scripts/*.sh                    Scenario wrappers for agent workflows
 scripts/sync_skill_bundle.py    Sync bundled skill runtime
 .claude/skills/kakao-terminal/  Public distributable skill
 internal/legacy-skills/         Archived micro-skills
