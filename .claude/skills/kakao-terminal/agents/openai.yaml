@@ -1,7 +1,7 @@
 interface:
   display_name: "Kakao Terminal"
   short_description: "Scan KakaoTalk inboxes, open conversation sessions, draft replies, and send only after explicit approval."
-  default_prompt: "Use $kakao-terminal to run doctor, scan the inbox, resolve a room, open a conversation session, fetch structured messages, draft without sending by default, and only call session-reply after the user has approved the exact final text. Use event-watch or daemon-run for monitoring."
+  default_prompt: "Use $kakao-terminal as a local KakaoTalk control surface. For a user-requested room, first scan visible room titles, resolve the best matching room semantically, and only open it if the match is clear. If multiple candidates are plausible, ask the user instead of guessing. Draft without sending by default, and only call session-reply after the user has approved the exact final text. Use event-watch or daemon-run for monitoring."
 
 policy:
   allow_implicit_invocation: true
