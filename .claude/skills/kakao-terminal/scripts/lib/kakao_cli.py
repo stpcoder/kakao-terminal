@@ -456,6 +456,36 @@ def render_session_close(payload: dict) -> None:
         print("  → KakaoTalk chat window was closed")
 
 
+def render_sessions_list(payload: dict) -> None:
+    if not payload["ok"]:
+        print(f"✗ {payload['error']['message']}")
+        return
+    sessions = payload["sessions"]
+    if not sessions:
+        print("✓ No agent sessions are currently stored")
+        return
+    print(f"=== Agent Sessions ({len(sessions)}) ===\n")
+    for session in sessions:
+        current = " [current]" if session["session_id"] == payload.get("current_session_id") else ""
+        stale = " [stale]" if session.get("stale") else ""
+        age = f" | age {session['age_minutes']}m" if session.get("age_minutes") is not None else ""
+        print(f"- {session['session_id']}: {session['room_name']}{current}{stale}{age}")
+
+
+def render_sessions_cleanup(payload: dict) -> None:
+    if not payload["ok"]:
+        print(f"✗ {payload['error']['message']}")
+        return
+    closed = payload["closed"]
+    failed = payload["failed"]
+    print(f"✓ Cleanup finished: {len(closed)} closed, {len(failed)} failed")
+    for item in closed:
+        print(f"  → closed {item['session_id']} ({item['room_name']})")
+    for item in failed:
+        message = item.get("error", {}).get("message", "unknown error")
+        print(f"  → failed {item['session_id']} ({item['room_name']}): {message}")
+
+
 def cmd_setup() -> dict:
     """Check prerequisites for KakaoTalk integration."""
     checks = {
@@ -1071,6 +1101,92 @@ def cmd_session_close(session_id: str) -> dict:
     }
 
 
+def _session_age_minutes(session: dict) -> Optional[int]:
+    ts = session.get("last_seen_at") or session.get("opened_at")
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    return max(0, int((datetime.now(timezone.utc).astimezone() - dt).total_seconds() // 60))
+
+
+def cmd_sessions_list(stale_after_minutes: int = 30) -> dict:
+    state = load_state()
+    sessions = []
+    current_session_id = None
+    current_room = state.get("current_room")
+    for session_id, session in state.get("agent_sessions", {}).items():
+        age_minutes = _session_age_minutes(session)
+        is_current = bool(current_room and session.get("room_name") == current_room)
+        if is_current and current_session_id is None:
+            current_session_id = session_id
+        view = clone_session_view(session)
+        view["age_minutes"] = age_minutes
+        view["stale"] = bool(age_minutes is not None and age_minutes >= stale_after_minutes)
+        sessions.append(view)
+    sessions.sort(key=lambda item: item["session_id"])
+    return {
+        "ok": True,
+        "command": "sessions-list",
+        "stale_after_minutes": stale_after_minutes,
+        "current_session_id": current_session_id,
+        "sessions": sessions,
+    }
+
+
+def cmd_sessions_cleanup(stale_after_minutes: int = 0, force: bool = False) -> dict:
+    state = load_state()
+    sessions = state.get("agent_sessions", {})
+    if not sessions:
+        return {
+            "ok": True,
+            "command": "sessions-cleanup",
+            "closed": [],
+            "failed": [],
+            "remaining_session_count": 0,
+        }
+
+    targets: List[Tuple[str, dict]] = []
+    for session_id, session in sessions.items():
+        age_minutes = _session_age_minutes(session)
+        if force or stale_after_minutes <= 0 or (age_minutes is not None and age_minutes >= stale_after_minutes):
+            targets.append((session_id, session))
+
+    closed = []
+    failed = []
+    for session_id, session in targets:
+        result = cmd_session_close(session_id)
+        if result.get("ok"):
+            closed.append(
+                {
+                    "session_id": session_id,
+                    "room_name": session.get("room_name"),
+                    "chat_closed": result.get("chat_closed", False),
+                }
+            )
+        else:
+            failed.append(
+                {
+                    "session_id": session_id,
+                    "room_name": session.get("room_name"),
+                    "error": result.get("error", {}),
+                }
+            )
+
+    remaining_state = load_state()
+    return {
+        "ok": True,
+        "command": "sessions-cleanup",
+        "closed": closed,
+        "failed": failed,
+        "remaining_session_count": len(remaining_state.get("agent_sessions", {})),
+        "stale_after_minutes": stale_after_minutes,
+        "force": force,
+    }
+
+
 def cmd_event_watch(session_id: str, interval_seconds: int = 3, count: int = 5, heartbeat_seconds: int = 30) -> int:
     """Stream event-like message deltas for a single session forever."""
     state = load_state()
@@ -1257,6 +1373,8 @@ Agent harness:
   event-watch     Stream message delta events for one session
   session-reply   Send a message safely for a session
   session-close   Close and remove an agent session
+  sessions-list   Show stored agent sessions and stale markers
+  sessions-cleanup Close old or all stored agent sessions
   daemon-run      Run a long-lived inbox/session event daemon
 
 Global options:
@@ -1271,6 +1389,9 @@ Examples:
   python kakao_cli.py event-watch conv_0001 3 5 30
   python kakao_cli.py --json session-reply conv_0001 "Hello"
   python kakao_cli.py --json session-close conv_0001
+  python kakao_cli.py --json sessions-list 30
+  python kakao_cli.py --json sessions-cleanup 30
+  python kakao_cli.py --json sessions-cleanup --force
   python kakao_cli.py daemon-run 5 10 5 30
 """
     )
@@ -1398,6 +1519,14 @@ def main() -> None:
             print_payload(cmd_session_close(rest[0]), render_session_close)
         else:
             print_payload(emit_error("session-close", "Usage: session-close <session_id>"), render_session_close)
+    elif cmd == "sessions-list":
+        stale_after_minutes = int(rest[0]) if rest and rest[0].isdigit() else 30
+        print_payload(cmd_sessions_list(stale_after_minutes), render_sessions_list)
+    elif cmd == "sessions-cleanup":
+        force = "--force" in rest
+        numeric = next((arg for arg in rest if arg.isdigit()), None)
+        stale_after_minutes = int(numeric) if numeric else 0
+        print_payload(cmd_sessions_cleanup(stale_after_minutes=stale_after_minutes, force=force), render_sessions_cleanup)
     elif cmd == "daemon-run":
         interval_seconds = int(rest[0]) if rest and rest[0].isdigit() else 5
         room_limit = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 10

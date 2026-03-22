@@ -34,6 +34,7 @@ This skill should be executed from a local macOS GUI session. SSH-only shells, h
 - Use `session-open` and `session-fetch` for agent workflows
 - Use `session-reply` only after an explicit human approval step
 - Use `session-close` when the task is complete
+- Use `sessions-list` and `sessions-cleanup` when stale sessions remain from interrupted or older runs
 
 ## Responsibility
 

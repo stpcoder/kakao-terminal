@@ -1,9 +1,9 @@
 ---
 name: kakao-terminal
-description: Operate KakaoTalk on macOS from an AI agent or terminal. Use this for setup checks, inbox scans, room resolution, conversation sessions, structured reads, safe replies, and long-running daemon or event-watch streams.
+description: Operate KakaoTalk on macOS from an AI agent or terminal. Use this for setup checks, inbox scans, room resolution, conversation sessions, structured reads, safe replies, lingering session cleanup, and long-running daemon or event-watch streams.
 user-invocable: true
 allowed-tools: Bash
-argument-hint: [--json] <doctor|inbox-scan|room-resolve|session-open|session-fetch|session-reply|session-close|event-watch|daemon-run> [args]
+argument-hint: [--json] <doctor|inbox-scan|room-resolve|session-open|session-fetch|session-reply|session-close|sessions-list|sessions-cleanup|event-watch|daemon-run> [args]
 ---
 
 # kakao-terminal
@@ -37,6 +37,8 @@ Examples:
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-fetch conv_0001 latest 20`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-reply conv_0001 "hello"`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-close conv_0001`
+- `python3 .claude/skills/kakao-terminal/scripts/run.py --json sessions-list 30`
+- `python3 .claude/skills/kakao-terminal/scripts/run.py --json sessions-cleanup 30`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py event-watch conv_0001 3 5 30`
 - `python3 .claude/skills/kakao-terminal/scripts/run.py daemon-run 5 10 5 30`
 
@@ -52,6 +54,7 @@ Prefer the structured session commands over the low-level human commands.
 6. Only when the user explicitly asks and the final message text is approved, send through `session-reply`
 7. After sending, close with `session-close`
 8. For long-lived automation, use `event-watch` or `daemon-run`
+9. If stale sessions remain from earlier interrupted runs, inspect with `sessions-list` and clear them with `sessions-cleanup`
 
 Low-level commands such as `list`, `open`, `read`, `send`, `search`, and `back` still exist, but they are secondary. Use them only when debugging or when the high-level session commands are not enough.
 
@@ -74,6 +77,16 @@ Recommended pattern:
 6. `python3 .claude/skills/kakao-terminal/scripts/run.py --json session-close conv_0001`
 
 If you are not certain whether a reply should be sent, stop in draft/review mode and ask the user.
+
+## Stale sessions
+
+Normal wrappers should close the sessions they open. If monitoring or old tests are still referencing previous sessions, use:
+
+- `python3 .claude/skills/kakao-terminal/scripts/run.py --json sessions-list 30`
+- `python3 .claude/skills/kakao-terminal/scripts/run.py --json sessions-cleanup 30`
+- `python3 .claude/skills/kakao-terminal/scripts/run.py --json sessions-cleanup --force`
+
+Use forced cleanup when an earlier run crashed, or when you need a clean monitoring baseline.
 
 ## Safety
 

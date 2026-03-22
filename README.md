@@ -82,6 +82,9 @@ python kakao_cli.py --json session-open "Customer Name"
 python kakao_cli.py --json session-fetch conv_0001 latest 20
 python kakao_cli.py --json session-watch conv_0001 60 3 5
 python kakao_cli.py --json session-close conv_0001
+python kakao_cli.py --json sessions-list 30
+python kakao_cli.py --json sessions-cleanup 30
+python kakao_cli.py --json sessions-cleanup --force
 ```
 
 Long-running automation:
@@ -153,6 +156,8 @@ For AI agents, the recommended surface is the JSON mode plus the session-oriente
 - `event-watch`: keep one session open and stream NDJSON delta events continuously
 - `session-reply`: verify the latest transcript and send a reply safely
 - `session-close`: release the room session and close the chat window when possible
+- `sessions-list`: inspect stored agent sessions and identify stale ones
+- `sessions-cleanup`: clean up stale or all lingering sessions
 - `daemon-run`: keep a long-lived inbox/session daemon running and emit NDJSON events for inbox changes and active session updates
 
 These commands are meant to be used with `--json` so an agent can parse room metadata, messages, cursors, and session ids directly instead of scraping human-readable terminal output.
@@ -272,6 +277,34 @@ Useful success checks:
   Must not contain `kakao_session_reply`
 - `approve_send`
   Must contain `kakao_session_reply` and then `kakao_session_close`
+
+## Stale session cleanup
+
+Scenario wrappers now close the sessions they open. Older test sessions or interrupted runs can still leave state behind in `~/.kakao-terminal-state.json`.
+
+Inspect current stored sessions:
+
+```bash
+python kakao_cli.py --json sessions-list 30
+```
+
+Clean up sessions older than 30 minutes:
+
+```bash
+python kakao_cli.py --json sessions-cleanup 30
+```
+
+Force-close every stored session:
+
+```bash
+python kakao_cli.py --json sessions-cleanup --force
+```
+
+Recommended use:
+
+- Run `sessions-list` before long monitoring sessions if old tests have accumulated
+- Run `sessions-cleanup --force` once after major refactors or interrupted manual testing
+- Let normal scenario wrappers handle cleanup for sessions they create
 
 ## Keep the bundle in sync
 
