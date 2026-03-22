@@ -133,6 +133,31 @@ TUI:
 python app.py
 ```
 
+TUI commands:
+
+```text
+/l           List visible rooms
+/o <n>       Open room number n from the current list
+/o <name>    Open a room by name
+/r           Refresh messages
+/u           Load older messages
+/d           Load newer or latest messages
+/b           Return to the room list
+/s <query>   Search rooms
+/c           Clear the screen
+/h           Show help
+/q           Quit
+```
+
+TUI keyboard behavior:
+
+- `↑`
+  Older messages in a room, or previous room page in the list
+- `↓`
+  Newer messages in a room, or next room page in the list
+- Type directly
+  Send a message when a room is open
+
 ## Requirements
 
 - macOS 12 or newer
@@ -260,6 +285,10 @@ The repository includes shell entrypoints that run OpenAI-compatible tool-callin
   Draft-only reply workflow. No sending allowed.
 - `./scripts/approve_send.sh "<room>" "<message>"`
   Explicitly approved send workflow. This is the only wrapper that should send.
+- `./scripts/open_requested_room.sh "<user request>"`
+  Resolve a user-style room request, choose the strongest visible room candidate, and open it without sending.
+- `./scripts/summarize_recent_days.sh "<room and time window request>"`
+  Open one room, fetch more history if needed, summarize the requested recent window, and close the session.
 - `./scripts/list_kakao_agent_scenarios.sh`
   Print available scenario names and descriptions.
 - `./scripts/list_kakao_agent_tools.sh`
@@ -288,6 +317,10 @@ Useful success checks:
 
 - `triage` / `review`
   `kakao_session_open` should succeed and include `messages`
+- `open_requested_room`
+  The transcript should inspect visible rooms first, then resolve and open one room without calling `kakao_session_reply`
+- `summarize_recent_days`
+  The transcript should open one room, fetch older history when needed, summarize with caveats if coverage is incomplete, and close the session
 - `monitor`
   `kakao_daemon_run_sample` should emit `daemon_started`, `connection_state`, and inbox or session delta events
 - `safe_reply`

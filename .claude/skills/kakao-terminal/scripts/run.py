@@ -40,6 +40,8 @@ Commands:
   event-watch  Stream long-running message delta events for one session
   session-reply Send a reply with session freshness checks
   session-close Close and release a session
+  sessions-list Show stored agent sessions and stale markers
+  sessions-cleanup Close old or all stored agent sessions
   daemon-run   Stream long-running inbox and session events
   help         Show this help
 

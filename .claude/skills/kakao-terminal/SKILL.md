@@ -3,7 +3,7 @@ name: kakao-terminal
 description: Operate KakaoTalk on macOS from an AI agent or terminal. Use this for setup checks, visible room scans, semantic room resolution, conversation sessions, structured reads, safe replies, lingering session cleanup, and long-running daemon or event-watch streams.
 user-invocable: true
 allowed-tools: Bash
-argument-hint: [--json] <doctor|inbox-scan|room-resolve|session-open|session-fetch|session-reply|session-close|sessions-list|sessions-cleanup|event-watch|daemon-run> [args]
+argument-hint: [--json] <doctor|setup|status|windows|inbox-scan|room-resolve|session-open|session-fetch|session-watch|session-reply|session-close|sessions-list|sessions-cleanup|event-watch|daemon-run> [args]
 ---
 
 # kakao-terminal
@@ -146,6 +146,10 @@ Use the provided wrappers when a scripted agent loop is preferred.
   Explicit send path. Re-open the room, re-check context, send only the approved text, then close.
 - `./scripts/monitor.sh`
   Validate daemon/event monitoring and inspect NDJSON output.
+- `./scripts/open_requested_room.sh "<user request>"`
+  Resolve a user-style room request carefully, then open and inspect the intended room without sending.
+- `./scripts/summarize_recent_days.sh "<room and time window request>"`
+  Open one room, fetch additional history when needed, summarize the requested recent time window, then close.
 
 When the user asks for a specific room, prefer the room resolution policy above over generic triage.
 
