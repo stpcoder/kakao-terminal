@@ -1,18 +1,23 @@
 # kakao-terminal
 
-Operate KakaoTalk on macOS from the terminal, a TUI, or a single installable AI skill.
+Operate KakaoTalk on macOS from the terminal, a TUI, or an installable AI skill.
 
-`kakao-terminal` is built for people who already live in the terminal and want KakaoTalk access without breaking flow. It reads KakaoTalk through the macOS Accessibility API, keeps the main app in the background, and exposes the same core actions through a local CLI, an interactive TUI, and a public skill package.
+This repository is a local KakaoTalk control toolkit for people who want terminal-first access to room lists, conversation history, monitoring, and approval-gated sending. It reads KakaoTalk through the macOS Accessibility API and exposes the same core operations through a CLI, a TUI, and a distributable skill.
 
-간단히 말하면, 카카오톡을 터미널에서 다루고 싶은 사람을 위한 macOS 도구입니다. 방 목록 보기, 채팅 열기, 최근 메시지 읽기, 새로고침, 메시지 보내기 같은 흐름을 CLI와 AI skill 형태로 제공합니다.
+간단히 말하면, 카카오톡을 터미널과 에이전트에서 다루기 위한 macOS 도구입니다. 방 목록 보기, 특정 톡방 열기, 최근 메시지 읽기, 감시, 승인 후 전송 같은 흐름을 CLI와 skill 형태로 제공합니다.
 
-## Why it stands out
+## Manual overview
 
-- One product-level skill instead of fragmented sub-command skills
-- Reads rooms and messages without hardcoding the author's local paths
-- Works as a local developer tool and as a marketplace-installable skill
-- Includes a setup check for KakaoTalk, Accessibility permission, and chat visibility
-- Keeps the install path explicit, so agents can recover from setup issues instead of failing silently
+Use this repository in one of three ways.
+
+- CLI
+  For direct local control and scripting
+- TUI
+  For interactive browsing and manual operation
+- Skill plus agent harness
+  For tool-calling agents that should read, monitor, draft, and only send after approval
+
+The CLI is the execution layer. The skill is the operating manual and wrapper that tells an agent how to use the CLI safely.
 
 ## What you can do
 
@@ -28,6 +33,18 @@ Operate KakaoTalk on macOS from the terminal, a TUI, or a single installable AI 
 - Return structured JSON for agent harnesses
 - Open session-scoped conversations and watch for replies
 - Run approval-gated agent workflows from shell scripts
+
+## Recommended use
+
+Use the repository in this order.
+
+1. Run `setup` or `doctor`
+2. Scan visible rooms
+3. Open one room deliberately
+4. Read or monitor
+5. Draft first
+6. Send only after explicit approval
+7. Close the session or clean up stale sessions
 
 ## Install as a skill
 

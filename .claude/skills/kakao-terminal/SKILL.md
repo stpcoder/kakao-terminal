@@ -84,7 +84,7 @@ Prioritize signals in this order:
 
 1. Exact visible title match
 2. Strong partial title match
-3. Nickname, affectionate label, shortened label, or emoji-decorated title that clearly refers to the same person
+3. Nickname, affectionate label, shortened label, or decorated title that clearly refers to the same person
 4. Recent active session context
 5. Only then use inbox heuristics such as unread count
 
@@ -95,7 +95,7 @@ Examples:
 - User says `윤수원 톡방 열어줘`
   If the visible room list contains `윤수원(21)`, open `윤수원(21)`.
 - User says `여자친구 톡방 열어줘`
-  If the visible list contains `애깅❣️`, treat that as a plausible semantic match and open it only if it is clearly the strongest candidate.
+  If the visible list contains `애깅`, treat that as a plausible semantic match and open it only if it is clearly the strongest candidate.
 - User says `엄마 톡방 열어줘`
   If the visible list contains `엄마`, `엄마아빠`, and `가족`, do not guess. Ask the user which one they mean.
 

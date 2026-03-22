@@ -668,7 +668,7 @@ def main(argv: List[str]) -> int:
                         "error": f"{scenario_name} requires additional user-style input",
                         "usage": {
                             "resolve-room": "python3 scripts/openai_tool_calling_harness.py resolve-room \"여자친구 톡방 열어줘\"",
-                            "recent-summary": "python3 scripts/openai_tool_calling_harness.py recent-summary \"애깅❣️ 톡방 3일치 대화 내역 조회해서 알려줘\"",
+                            "recent-summary": "python3 scripts/openai_tool_calling_harness.py recent-summary \"애깅 톡방 3일치 대화 내역 조회해서 알려줘\"",
                         }.get(scenario_name, f"python3 scripts/openai_tool_calling_harness.py {scenario_name} \"<request>\""),
                     },
                     ensure_ascii=False,
