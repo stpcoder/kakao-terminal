@@ -22,6 +22,8 @@ class Scenario:
     user_prompt: str
     allow_send: bool = False
     max_turns: int = 8
+    auto_close_sessions: bool = True
+    tool_names: Optional[List[str]] = None
 
 
 SCENARIOS: Dict[str, Scenario] = {
@@ -47,14 +49,37 @@ SCENARIOS: Dict[str, Scenario] = {
     ),
     "safe-reply": Scenario(
         name="safe-reply",
-        description="Open a conversation, read context, and send only if the scenario explicitly allows it.",
+        description="Open a conversation, read context, draft a reply candidate, and stop for human approval.",
         user_prompt=(
             "Act as a cautious KakaoTalk customer support agent. "
-            "Check readiness, inspect one room, read recent messages, and only send if it is clearly safe "
-            "and explicitly allowed by the scenario."
+            "Check readiness, inspect one room, read recent messages, and prepare a candidate reply only if it is useful. "
+            "Never send a message in this scenario. "
+            "If a reply is appropriate, provide a concise approval packet that includes the target room name and the exact reply text to approve. "
+            "Close any opened session before finishing."
+        ),
+        allow_send=False,
+        max_turns=10,
+    ),
+    "approve-send": Scenario(
+        name="approve-send",
+        description="Send an explicitly approved message after reopening and rechecking the target conversation.",
+        user_prompt=(
+            "You have explicit approval to send one specific KakaoTalk reply. "
+            "Re-check setup, reopen the approved room, fetch recent context, then send exactly the approved message if the room still matches. "
+            "Do not invent or rewrite the approved text. "
+            "Close the session before finishing."
         ),
         allow_send=True,
-        max_turns=10,
+        max_turns=8,
+        tool_names=[
+            "kakao_setup",
+            "kakao_status",
+            "kakao_room_resolve",
+            "kakao_session_open",
+            "kakao_session_fetch",
+            "kakao_session_reply",
+            "kakao_session_close",
+        ],
     ),
     "monitor": Scenario(
         name="monitor",
@@ -165,8 +190,8 @@ def sample_stream(command_args: str, max_lines: int = 3, timeout_sec: int = 15) 
     }
 
 
-def tool_schema() -> List[Dict[str, Any]]:
-    return [
+def tool_schema(allowed_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    tools = [
         {
             "type": "function",
             "function": {
@@ -337,9 +362,16 @@ def tool_schema() -> List[Dict[str, Any]]:
             },
         },
     ]
+    if allowed_names is None:
+        return tools
+    allowed = set(allowed_names)
+    return [tool for tool in tools if tool["function"]["name"] in allowed]
 
 
-def build_tool_executor(allow_send: bool) -> Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]:
+def build_tool_executor(
+    allow_send: bool,
+    allowed_names: Optional[List[str]] = None,
+) -> Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]:
     def json_cmd(command: str) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
         def runner(_: Dict[str, Any]) -> Dict[str, Any]:
             return run_json_command(command)
@@ -399,7 +431,7 @@ def build_tool_executor(allow_send: bool) -> Dict[str, Callable[[Dict[str, Any]]
             max_lines=sample_lines,
         )
 
-    return {
+    executors = {
         "kakao_setup": json_cmd("--json setup"),
         "kakao_status": json_cmd("--json status"),
         "kakao_windows": json_cmd("--json windows"),
@@ -412,11 +444,58 @@ def build_tool_executor(allow_send: bool) -> Dict[str, Callable[[Dict[str, Any]]
         "kakao_event_watch_sample": event_watch_sample,
         "kakao_daemon_run_sample": daemon_run_sample,
     }
+    if allowed_names is None:
+        return executors
+    allowed = set(allowed_names)
+    return {name: fn for name, fn in executors.items() if name in allowed}
 
 
-def run_scenario(base_url: str, api_key: str, model: str, scenario: Scenario) -> Dict[str, Any]:
-    tools = tool_schema()
-    executors = build_tool_executor(scenario.allow_send)
+def extract_opened_session_id(result: Dict[str, Any]) -> Optional[str]:
+    payload = result.get("json")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("command") != "session-open" or not payload.get("ok"):
+        return None
+    session = payload.get("session") or {}
+    return session.get("session_id")
+
+
+def extract_closed_session_id(result: Dict[str, Any], args: Dict[str, Any]) -> Optional[str]:
+    payload = result.get("json")
+    if isinstance(payload, dict) and payload.get("command") == "session-close" and payload.get("ok"):
+        return payload.get("session_id") or args.get("session_id")
+    return None
+
+
+def cleanup_sessions(
+    executors: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]],
+    open_sessions: List[str],
+) -> List[Dict[str, Any]]:
+    cleanup_results: List[Dict[str, Any]] = []
+    if "kakao_session_close" not in executors:
+        return cleanup_results
+    close = executors["kakao_session_close"]
+    for session_id in list(open_sessions):
+        result = close({"session_id": session_id})
+        cleanup_results.append(
+            {
+                "session_id": session_id,
+                "result": result,
+            }
+        )
+    return cleanup_results
+
+
+def run_scenario(
+    base_url: str,
+    api_key: str,
+    model: str,
+    scenario: Scenario,
+    approved_target: str = "",
+    approved_message: str = "",
+) -> Dict[str, Any]:
+    tools = tool_schema(scenario.tool_names)
+    executors = build_tool_executor(scenario.allow_send, scenario.tool_names)
     system_prompt = (
         "You are a KakaoTalk operations agent using tool calling. "
         "Use tools to inspect readiness, triage rooms, review conversations, and optionally send replies. "
@@ -426,25 +505,42 @@ def run_scenario(base_url: str, api_key: str, model: str, scenario: Scenario) ->
         "Do not send a reply unless the scenario explicitly allows it. "
         "Keep the final answer concise and operational."
     )
+    if not scenario.allow_send:
+        system_prompt += " Sending is disabled in this scenario."
+    if scenario.name == "safe-reply":
+        system_prompt += (
+            " You must never call the send tool here. "
+            "If a reply is warranted, output an approval packet with the target room and exact draft text."
+        )
+    if scenario.name == "approve-send":
+        system_prompt += (
+            " You have already received user approval. "
+            "Send only the explicitly approved text after verifying the correct room, then close the session."
+        )
+    task_payload: Dict[str, Any] = {
+        "scenario": {
+            "name": scenario.name,
+            "description": scenario.description,
+            "allow_send": scenario.allow_send,
+            "max_turns": scenario.max_turns,
+            "auto_close_sessions": scenario.auto_close_sessions,
+        },
+        "task": scenario.user_prompt,
+    }
+    if approved_target or approved_message:
+        task_payload["approved_send"] = {
+            "target": approved_target,
+            "message": approved_message,
+        }
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": json.dumps(
-                {
-                    "scenario": {
-                        "name": scenario.name,
-                        "description": scenario.description,
-                        "allow_send": scenario.allow_send,
-                        "max_turns": scenario.max_turns,
-                    },
-                    "task": scenario.user_prompt,
-                },
-                ensure_ascii=False,
-            ),
+            "content": json.dumps(task_payload, ensure_ascii=False),
         },
     ]
     transcript: List[Dict[str, Any]] = []
+    open_sessions: List[str] = []
     for _ in range(scenario.max_turns):
         response = call_chat_completion(base_url, api_key, model, messages, tools=tools, tool_choice="auto")
         choice = response["choices"][0]
@@ -453,11 +549,13 @@ def run_scenario(base_url: str, api_key: str, model: str, scenario: Scenario) ->
 
         tool_calls = assistant.get("tool_calls") or []
         if not tool_calls:
+            cleanup = cleanup_sessions(executors, open_sessions) if scenario.auto_close_sessions else []
             return {
                 "scenario": scenario.name,
                 "description": scenario.description,
                 "final_message": assistant.get("content", ""),
                 "transcript": transcript,
+                "cleanup": cleanup,
             }
 
         messages.append(
@@ -476,6 +574,12 @@ def run_scenario(base_url: str, api_key: str, model: str, scenario: Scenario) ->
                 args = {"_raw_arguments": raw_args}
             result = executors[name](args)
             transcript.append({"tool_call": {"name": name, "arguments": args, "result": result}})
+            opened_session_id = extract_opened_session_id(result)
+            if opened_session_id and opened_session_id not in open_sessions:
+                open_sessions.append(opened_session_id)
+            closed_session_id = extract_closed_session_id(result, args)
+            if closed_session_id and closed_session_id in open_sessions:
+                open_sessions.remove(closed_session_id)
             messages.append(
                 {
                     "role": "tool",
@@ -484,11 +588,13 @@ def run_scenario(base_url: str, api_key: str, model: str, scenario: Scenario) ->
                 }
             )
 
+    cleanup = cleanup_sessions(executors, open_sessions) if scenario.auto_close_sessions else []
     return {
         "scenario": scenario.name,
         "description": scenario.description,
         "final_message": "Scenario stopped at max_turns without a final assistant message.",
         "transcript": transcript,
+        "cleanup": cleanup,
     }
 
 
@@ -498,16 +604,30 @@ def main(argv: List[str]) -> int:
         return 0
 
     base_url = os.environ.get("LLM_BASE_URL", "http://100.81.203.52:8317/v1")
-    api_key = os.environ.get("LLM_API_KEY")
     model = os.environ.get("LLM_MODEL", "gpt-5.1-codex-mini")
-    if not api_key:
-        print("LLM_API_KEY is required", file=sys.stderr)
-        return 1
-
     scenario_name = argv[1] if len(argv) >= 2 else "triage"
     scenario = SCENARIOS.get(scenario_name)
     if not scenario:
         print(json.dumps({"ok": False, "error": f"Unknown scenario: {scenario_name}", "available": list(SCENARIOS)}, ensure_ascii=False, indent=2))
+        return 1
+    approved_target = argv[2] if len(argv) >= 3 else ""
+    approved_message = argv[3] if len(argv) >= 4 else ""
+    if scenario_name == "approve-send" and (not approved_target or not approved_message):
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "approve-send requires <target> and <approved_message>",
+                    "usage": "python3 scripts/openai_tool_calling_harness.py approve-send <target> <approved_message>",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 1
+    api_key = os.environ.get("LLM_API_KEY")
+    if not api_key:
+        print("LLM_API_KEY is required", file=sys.stderr)
         return 1
 
     report = {
@@ -515,7 +635,7 @@ def main(argv: List[str]) -> int:
         "runner": str(RUNNER),
         "model": model,
         "base_url": base_url,
-        "result": run_scenario(base_url, api_key, model, scenario),
+        "result": run_scenario(base_url, api_key, model, scenario, approved_target=approved_target, approved_message=approved_message),
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
