@@ -192,7 +192,7 @@ class KakaoBridge:
             elif exact_title:
                 match = title == window_name
             else:
-                match = window_name in title
+                match = self._title_matches_room(title, window_name)
             if match:
                 children = self._ax_val(win, 'AXChildren')
                 if not children:
@@ -213,7 +213,27 @@ class KakaoBridge:
         """Strip emoji and special unicode characters for AppleScript compatibility"""
         import re
         # Keep Korean, ASCII, common punctuation, spaces
-        return re.sub(r'[^\w\s가-힣ㄱ-ㅎㅏ-ㅣa-zA-Z0-9.,!?~\-_()@#$%^&*+=]', '', text).strip()
+        return re.sub(r'[^\w\s가-힣ㄱ-ㅎㅏ-ㅣa-zA-Z0-9.,!?~\-_()\[\]@#$%^&*+=]', '', text).strip()
+
+    @staticmethod
+    def _normalize_match_text(text: str) -> str:
+        """Normalize titles and room names so matching is resilient to punctuation/emoji differences."""
+        import re
+        normalized = re.sub(r'[^\w\s가-힣ㄱ-ㅎㅏ-ㅣa-zA-Z0-9]', ' ', text or "")
+        normalized = re.sub(r'\s+', ' ', normalized).strip().lower()
+        return normalized
+
+    def _title_matches_room(self, title: str, room_name: str) -> bool:
+        """Return True when a KakaoTalk window title refers to the given room."""
+        if not title or not room_name:
+            return False
+        if room_name in title:
+            return True
+        normalized_title = self._normalize_match_text(title)
+        normalized_room = self._normalize_match_text(room_name)
+        if not normalized_title or not normalized_room:
+            return False
+        return normalized_room in normalized_title
 
     def _run_applescript(self, script: str, timeout: int = 15) -> str:
         """AppleScript 실행 (임시 파일 사용)"""
@@ -411,15 +431,14 @@ end tell
             if search_name:
                 if exact_title and title != search_name:
                     continue
-                if not exact_title and search_name not in title:
+                if not exact_title and not self._title_matches_room(title, search_name):
                     continue
             titles.append(title)
         return titles
 
     def _capture_window_title_after_open(self, room_name: str, before_titles: List[str]) -> Optional[str]:
         """Capture the best exact chat window title after opening a room."""
-        search_name = self._strip_emoji(room_name)
-        after_titles = self._list_chat_window_titles(search_name)
+        after_titles = self._list_chat_window_titles(room_name)
         if not after_titles:
             return None
 
@@ -432,16 +451,37 @@ end tell
         if len(exact_titles) == 1:
             return exact_titles[0]
 
+        matching_titles = [title for title in after_titles if self._title_matches_room(title, room_name)]
+        if len(matching_titles) == 1:
+            return matching_titles[0]
+
         if len(after_titles) == 1:
             return after_titles[0]
 
+        return None
+
+    def _wait_for_chat_window_open(
+        self,
+        room_name: str,
+        before_titles: List[str],
+        attempts: int = 6,
+        delay: float = 0.2,
+    ) -> Optional[str]:
+        """Wait for a room open action to surface a readable chat window title."""
+        for _ in range(max(1, attempts)):
+            title = self._capture_window_title_after_open(room_name, before_titles)
+            if title:
+                return title
+            if self._list_chat_window_titles(room_name):
+                return None
+            time.sleep(delay)
         return None
 
     def _current_chat_window_exists(self) -> bool:
         """Check whether the currently selected chat window still exists."""
         if self.current_window_title:
             return self._chat_window_exists(exact_title=self.current_window_title)
-        search_name = self._strip_emoji(self.current_room) if self.current_room else ""
+        search_name = self.current_room or ""
         if not search_name:
             return False
         return self._chat_window_exists(search_name=search_name)
@@ -528,12 +568,11 @@ end tell
         before_titles = self._list_chat_window_titles()
         opened = self._open_room_by_index_press(row_index)
         if opened:
-            time.sleep(0.3)
             if room_name:
-                search_name = self._strip_emoji(room_name)
-                if search_name and self._chat_window_exists(search_name):
+                window_title = self._wait_for_chat_window_open(room_name, before_titles)
+                if self._chat_window_exists(search_name=room_name):
                     self.current_room = room_name
-                    self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
+                    self.current_window_title = window_title
                     return True
             else:
                 self.current_room = room_name
@@ -546,14 +585,15 @@ end tell
         if not self._open_room_by_index_raise(row_index):
             return False
 
-        time.sleep(0.3)  # Wait for chat window to open
         if room_name:
-            search_name = self._strip_emoji(room_name)
-            if search_name and not self._chat_window_exists(search_name):
+            window_title = self._wait_for_chat_window_open(room_name, before_titles, attempts=8, delay=0.25)
+            if not self._chat_window_exists(search_name=room_name):
                 return False
+        else:
+            window_title = None
 
         self.current_room = room_name
-        self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
+        self.current_window_title = window_title
         return True
 
     def _open_room_by_name_press(self, room_name: str) -> bool:
@@ -654,10 +694,10 @@ end tell
         before_titles = self._list_chat_window_titles()
         opened = self._open_room_by_name_press(room_name)
         if opened:
-            time.sleep(0.3)
-            if self._chat_window_exists(search_name):
+            window_title = self._wait_for_chat_window_open(room_name, before_titles)
+            if self._chat_window_exists(search_name=room_name):
                 self.current_room = room_name
-                self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
+                self.current_window_title = window_title
                 return True
 
         if not allow_raise_fallback:
@@ -666,12 +706,12 @@ end tell
         if not self._open_room_by_name_raise(room_name):
             return False
 
-        time.sleep(0.3)  # Wait for chat window to open
-        if not self._chat_window_exists(search_name):
+        window_title = self._wait_for_chat_window_open(room_name, before_titles, attempts=8, delay=0.25)
+        if not self._chat_window_exists(search_name=room_name):
             return False
 
         self.current_room = room_name
-        self.current_window_title = self._capture_window_title_after_open(room_name, before_titles)
+        self.current_window_title = window_title
         return True
 
     def send_message(self, message: str) -> bool:
@@ -742,7 +782,7 @@ end tell
                 continue
             if exact_title is not None and title == exact_title:
                 return True
-            if search_name and search_name in title:
+            if search_name and self._title_matches_room(title, search_name):
                 return True
         return False
 
